@@ -1,0 +1,6 @@
+# Credenciales de Firebase / Google — NUNCA subir al repo
+*serviceAccount*.json
+*service-account*.json
+firebase-adminsdk*.json
+.env
+.env.local
