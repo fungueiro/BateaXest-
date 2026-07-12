@@ -1,0 +1,1199 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cuaderno de Batea</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<style>body{margin:0}</style></head><body><div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useMemo}=React;
+
+// ─── Tokens ───────────────────────────────────────────────────────────────
+const C = {
+  ink: "#0B1B26", panel: "#122834", panel2: "#16303E", line: "#1F3D4D",
+  text: "#E8EFF2", mut: "#8FA6B0",
+  rope: "#C9A15C", pink: "#E087B8", foam: "#5FB99F", warn: "#D97B66",
+  sel: "#F2D48A",
+};
+const CAT = {
+  colectora: { label: "Colectora", color: C.rope },
+  desdoble: { label: "Mexilla / Desdoble", color: C.pink },
+  venta: { label: "Venta", color: C.foam },
+};
+const CATS = Object.keys(CAT);
+const hoy = () => new Date().toISOString().slice(0, 10);
+const fmtEUR = (n) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+const fmtN = (n) => n.toLocaleString("es-ES");
+const DESCT = 4.38, IVA = 10.5;
+const totalVenta = (b) => b * (1 - DESCT / 100) * (1 + IVA / 100);
+const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+const descargarCSV = (nombre, headers, rows) => {
+  const csv = "﻿" + [headers.map(csvEsc).join(";"), ...rows.map((r) => r.map(csvEsc).join(";"))].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nombre; a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ─── Utilidades batea ─────────────────────────────────────────────────────
+// celdas: { "fila-col": categoria } · extra: cuerdas sin ubicar por categoría
+const nuevaBatea = (id, nombre, ancho, largo) => ({
+  id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, extra: { colectora: 0, desdoble: 0, venta: 0 },
+});
+const cap = (b) => b.ancho * b.largo - Object.keys(b.bloq || {}).length;
+const nCeldas = (b, cat) => Object.values(b.celdas).filter((c) => !cat || c === cat).length;
+const stock = (b, cat) => nCeldas(b, cat) + b.extra[cat];
+const ocup = (b) => nCeldas(b) + CATS.reduce((s, c) => s + b.extra[c], 0);
+const extraTot = (b) => CATS.reduce((s, c) => s + b.extra[c], 0);
+const libres = (b) => cap(b) - ocup(b);
+// Límite lógico por batea (independiente del nº de celdas)
+const LIM_PROD = 500; // venta + mexilla/desdoble
+const LIM_COL = 100;  // colectora
+const exceso = (b) => {
+  const prod = stock(b, "venta") + stock(b, "desdoble");
+  const col = stock(b, "colectora");
+  const av = [];
+  if (prod > LIM_PROD) av.push({ tipo: "venta + mexilla/desdoble", n: prod - LIM_PROD, lim: LIM_PROD, actual: prod });
+  if (col > LIM_COL) av.push({ tipo: "colectora", n: col - LIM_COL, lim: LIM_COL, actual: col });
+  return av;
+};
+const capLog = () => LIM_PROD + LIM_COL; // tope lógico de cuerdas por batea (500 + 100)
+const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, extra: { ...b.extra } }));
+
+function seed(id, nombre, fill) {
+  const b = nuevaBatea(id, nombre, 20, 25);
+  let i = 0;
+  for (const [cat, n] of fill) for (let k = 0; k < n; k++, i++) b.celdas[`${Math.floor(i / 20)}-${i % 20}`] = cat;
+  return b;
+}
+const seedBateas = [
+  seed(1, "Batea 1", [["colectora", 120], ["desdoble", 260], ["venta", 80]]),
+  seed(2, "Batea 2", [["colectora", 200], ["desdoble", 150], ["venta", 40]]),
+  seed(3, "Batea 3", [["desdoble", 300], ["venta", 160]]),
+];
+
+// ─── UI base ──────────────────────────────────────────────────────────────
+const inp = { background: C.ink, border: `1px solid ${C.line}`, color: C.text, borderRadius: 6, padding: "8px 10px", fontSize: 14, width: "100%", fontFamily: "Inter, sans-serif" };
+const lbl = { fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: C.mut, display: "block", marginBottom: 4 };
+const btn = (primary, disabled) => ({
+  background: primary ? C.rope : "transparent", color: primary ? C.ink : C.text,
+  border: `1px solid ${primary ? C.rope : C.line}`, borderRadius: 6, padding: "9px 16px",
+  fontSize: 13, fontWeight: 600, letterSpacing: "0.04em", cursor: disabled ? "default" : "pointer",
+  opacity: disabled ? 0.45 : 1, fontFamily: "Inter, sans-serif",
+});
+const h3 = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: 18, letterSpacing: "0.08em", textTransform: "uppercase", color: C.mut, margin: "26px 0 10px" };
+const mini = (color) => ({ background: "transparent", border: `1px solid ${color || C.line}`, color: color || C.text, borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer", fontFamily: "Inter, sans-serif" });
+const Field = ({ label, children, w }) => (
+  <div style={{ flex: 1, minWidth: w || 130 }}><label style={lbl}>{label}</label>{children}</div>
+);
+const Warn = ({ children }) => (
+  <span style={{ color: C.warn, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
+    <span style={{ fontWeight: 700 }}>⚠</span>{children}
+  </span>
+);
+
+const BarChart = ({ data, valueKey, color }) => {
+  const max = Math.max(1, ...data.map((d) => d[valueKey]));
+  const w = 700, h = 160, padL = 6, padB = 22;
+  const bw = data.length ? (w - padL) / data.length : 0;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: 140 }}>
+      <line x1={padL} y1={h - padB} x2={w} y2={h - padB} stroke={C.line} strokeWidth="1" />
+      {data.map((d, i) => {
+        const bh = (d[valueKey] / max) * (h - padB - 16);
+        const x = padL + i * bw + bw * 0.15, bwid = bw * 0.7, y = h - padB - bh;
+        return (
+          <g key={d.m}>
+            <rect x={x} y={y} width={bwid} height={Math.max(bh, 1)} fill={color} rx={2} />
+            <text x={x + bwid / 2} y={h - padB + 13} textAnchor="middle" fontSize="9" fill={C.mut}>{d.m.slice(5)}/{d.m.slice(2, 4)}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+// ─── Rejilla posicional ───────────────────────────────────────────────────
+function Grid({ b, sel, onCell, elegible, info, maxW = 340 }) {
+  const size = 12, gap = 2;
+  const [drag, setDrag] = useState(null); // 'add' | 'del'
+  const [tip, setTip] = useState(null); // {x, y, txt}
+  // Borde distinto por lote solo si >1 lote de la misma categoría en la batea
+  const loteStroke = useMemo(() => {
+    const PAL = ["#FFFFFF", "#FFD166", "#EF476F", "#06D6A0", "#9b5de5", "#F78C6B"];
+    const byCat = {};
+    for (const [k, cat] of Object.entries(b.celdas)) {
+      const id = b.lotes?.[k] ?? "init";
+      (byCat[cat] = byCat[cat] || new Set()).add(id);
+    }
+    const m = {};
+    for (const [cat, ids] of Object.entries(byCat)) {
+      if (ids.size < 2) continue;
+      [...ids].sort().forEach((id, i) => { m[cat + "|" + id] = PAL[i % PAL.length]; });
+    }
+    return m;
+  }, [b]);
+  const w = b.ancho * (size + gap), h = b.largo * (size + gap);
+  const MIN_CELL = 13; // px mínimos por celda en pantalla
+  const pxAncho = Math.max(maxW, b.ancho * MIN_CELL); // si no caben, el grid crece y se hace scroll
+  const okK = (k) => {
+    const cat = b.celdas[k], blq = b.bloq?.[k];
+    return !!onCell && !blq && (!elegible || elegible(k, cat, blq));
+  };
+  const touchK = (e) => {
+    const t = e.touches[0];
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    return el?.getAttribute?.("data-k") || null;
+  };
+  const onTS = onCell ? (e) => {
+    const k = touchK(e);
+    if (k && okK(k)) { const m = sel?.has(k) ? "del" : "add"; setDrag(m); onCell(k, m); }
+  } : undefined;
+  const onTM = onCell ? (e) => {
+    if (!drag) return;
+    const k = touchK(e);
+    if (k && okK(k)) onCell(k, drag);
+  } : undefined;
+  return (
+    <div style={{ overflowX: pxAncho > maxW ? "auto" : "visible", maxWidth: maxW, WebkitOverflowScrolling: "touch" }}>
+    <div style={{ position: "relative", width: pxAncho > maxW ? pxAncho : "auto", maxWidth: pxAncho > maxW ? "none" : maxW }}>
+    {tip && <div style={{ position: "absolute", left: tip.x, top: tip.y, transform: "translate(-50%,-115%)",
+      background: "#0B1B26", color: "#E8F1F5", border: "1px solid #2A4A5E", borderRadius: 6,
+      padding: "4px 8px", fontSize: 12, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>}
+    <svg viewBox={`0 0 ${w} ${h}`}
+      style={{ width: "100%", display: "block", userSelect: "none", touchAction: onCell ? "none" : "auto" }}
+      onMouseUp={() => setDrag(null)} onMouseLeave={() => { setDrag(null); setTip(null); }}
+      onTouchStart={onTS} onTouchMove={onTM}
+      onTouchEnd={() => setDrag(null)} onTouchCancel={() => setDrag(null)}>
+      {Array.from({ length: b.largo }, (_, r) =>
+        Array.from({ length: b.ancho }, (_, c) => {
+          const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
+          const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
+          const ok = elegible ? elegible(k, cat, blq) : false;
+          const isSel = sel?.has(k);
+          return (
+            <rect key={k} data-k={k} x={c * (size + gap)} y={r * (size + gap)} width={size} height={size} rx={2}
+              fill={blq ? "#050E14" : cat ? CAT[cat].color : C.line}
+              stroke={isSel ? C.sel : ls || "none"} strokeWidth={isSel ? 2.5 : ls ? 1.3 : 0}
+              opacity={elegible && !ok && !isSel ? 0.3 : 1}
+              style={{ cursor: ok ? "pointer" : "default" }}
+              onMouseDown={ok ? () => { const m = sel?.has(k) ? "del" : "add"; setDrag(m); onCell(k, m); } : undefined}
+              onMouseEnter={(e) => { if (ok && drag) onCell(k, drag);
+                if (info && cat) { const rb = e.currentTarget.closest("div").getBoundingClientRect(), r2 = e.currentTarget.getBoundingClientRect();
+                  setTip({ x: r2.left - rb.left + r2.width / 2, y: r2.top - rb.top, txt: info(k, cat) }); }
+                else setTip(null); }}
+              onMouseLeave={() => setTip(null)} />
+          );
+        })
+      )}
+    </svg>
+    </div>
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────
+function GestionBatea() {
+  const [tab, setTab] = useState("bateas");
+  const [bateas, setBateas] = useState(seedBateas);
+  const [ops, setOps] = useState([]);
+  const [ventas, setVentas] = useState([]);
+  const [aviso, setAviso] = useState("");
+  const flash = (m) => { setAviso(m); setTimeout(() => setAviso(""), 4500); };
+  const bx = (id) => bateas.find((b) => b.id === +id);
+  const bn = (id) => bx(id)?.nombre || "—";
+  const loteInfo = (b) => (k, cat) => {
+    const op = ops.find((x) => x.id === b.lotes?.[k]);
+    if (!op) return `${CAT[cat].label} · lote inicial`;
+    return `${CAT[cat].label} · ${op.fecha}${op.nota ? " · " + op.nota : ""}`;
+  };
+
+  // ── Edición de batea ──
+  const [edit, setEdit] = useState(null); // {id, nombre, ancho, largo}
+  const saveEdit = () => {
+    const a = parseInt(edit.ancho), l = parseInt(edit.largo);
+    if (!edit.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    setBateas(bateas.map((b) => {
+      if (b.id !== edit.id) return b;
+      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {}, extra: { ...b.extra } };
+      let fuera = 0, flotFuera = 0;
+      for (const [k, cat] of Object.entries(b.celdas)) {
+        const [r, c] = k.split("-").map(Number);
+        if (r < l && c < a) { nb.celdas[k] = cat; if (b.lotes?.[k]) nb.lotes[k] = b.lotes[k]; }
+        else { nb.extra[cat]++; fuera++; }
+      }
+      for (const k of Object.keys(b.bloq || {})) {
+        const [r, c] = k.split("-").map(Number);
+        if (r < l && c < a) nb.bloq[k] = true; else flotFuera++;
+      }
+      if (fuera || flotFuera) flash(`${nb.nombre}: ${fuera ? fuera + " cuerdas sin ubicar" : ""}${fuera && flotFuera ? " · " : ""}${flotFuera ? flotFuera + " flotadores fuera del nuevo tamaño (eliminados)" : ""}.`);
+      return nb;
+    }));
+    setEdit(null); setUltimaOp(null);
+  };
+  const [delBatea, setDelBatea] = useState(null); // id pendiente de confirmar
+  const borrarBatea = (id) => {
+    setBateas(bateas.filter((b) => b.id !== id));
+    setEdit(null); setDelBatea(null); setUltimaOp(null);
+    flash("Batea eliminada. Su inventario de cuerdas se pierde; operaciones y ventas históricas se conservan.");
+  };
+
+  // ── Flotadores (celdas anuladas permanentemente) ──
+  const [flot, setFlot] = useState(null); // { bateaId, sel:Set }
+  const abrirFlot = (b) => setFlot({ bateaId: b.id, sel: new Set(Object.keys(b.bloq || {})) });
+
+  // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
+  const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
+  const reubCell = (k, modo) => {
+    const bs = clon(bateas);
+    const b = bs.find((x) => x.id === reub.bateaId);
+    if (b.bloq?.[k]) return;
+    if (reub.cat) { // modo ubicar extra
+      if (!b.celdas[k] && b.extra[reub.cat] > 0) {
+        b.celdas[k] = reub.cat; b.extra[reub.cat]--;
+        setBateas(bs); setUltimaOp(null);
+        if (b.extra[reub.cat] === 0) setReub({ ...reub, cat: null });
+      }
+      return;
+    }
+    if (b.celdas[k]) { // seleccionar/deseleccionar orígenes (drag soportado)
+      const sel = new Set(reub.sel);
+      modo === "del" ? sel.delete(k) : sel.add(k);
+      setReub({ ...reub, sel });
+      return;
+    }
+    if (reub.sel.size) { // celda libre: mueve la primera del grupo (orden de selección)
+      const from = reub.sel.values().next().value;
+      b.celdas[k] = b.celdas[from]; delete b.celdas[from];
+      if (b.lotes?.[from] != null) { b.lotes[k] = b.lotes[from]; delete b.lotes[from]; }
+      const sel = new Set(reub.sel); sel.delete(from);
+      setBateas(bs); setUltimaOp(null); setReub({ ...reub, sel });
+    }
+  };
+  const flotCell = (k, modo) => setFlot((f) => {
+    const s = new Set(f.sel);
+    modo === "del" ? s.delete(k) : s.add(k);
+    return { ...f, sel: s };
+  });
+  const saveFlot = () => {
+    setBateas(bateas.map((b) => b.id === flot.bateaId
+      ? { ...b, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])) } : b));
+    setFlot(null); setUltimaOp(null);
+  };
+
+  // ── Alta de batea ──
+  const [nb, setNb] = useState({ nombre: "", ancho: "", largo: "" });
+  const addBatea = () => {
+    const a = parseInt(nb.ancho), l = parseInt(nb.largo);
+    if (!nb.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    const b = nuevaBatea(Date.now(), nb.nombre, a, l);
+    setBateas([...bateas, b]);
+    setNb({ nombre: "", ancho: "", largo: "" });
+    setFlot({ bateaId: b.id, sel: new Set() });
+  };
+
+  // ── Formulario de operación ──
+  const [op, setOp] = useState({
+    tipo: "siembra", fecha: hoy(), bateaId: 1, bateaDestId: 2,
+    cat: "colectora", catDest: "desdoble", n: "", nDest: "", nota: "", dir: "quitar",
+    vmodo: "sacos", vsacos: "", vkg: "", vdesct: "", veur: "", vpersona: "", vcomprador: "",
+  });
+
+  // ── Colocación (tras Registrar lote) ──
+  // pend: { op, fases:[{modo:'quitar'|'poner', bateaId, cat, n}], fase, sel:Set }
+  const [pend, setPend] = useState(null);
+
+  // ── Deshacer última operación (un nivel; se invalida si el plano cambia por otra vía) ──
+  const [ultimaOp, setUltimaOp] = useState(null); // {snap, opId, ventaId}
+  const deshacer = () => {
+    if (!ultimaOp) return;
+    setBateas(ultimaOp.snap);
+    setOps((os) => os.filter((o) => o.id !== ultimaOp.opId));
+    if (ultimaOp.ventaId) setVentas((vs) => vs.filter((x) => x.id !== ultimaOp.ventaId));
+    setUltimaOp(null);
+    flash("Última operación deshecha: plano, historial y venta vinculada restaurados.");
+  };
+
+  // ── Edición / borrado de registros de operación ──
+  const [delOp, setDelOp] = useState(null);
+  const [editOp, setEditOp] = useState(null); // {id, fecha, nota} — no toca el plano
+  const [undoOp, setUndoOp] = useState(null); // snapshot {ops, ventas} previo a editar/borrar
+  const borrarOp = (id) => {
+    const vLig = ventas.find((x) => x.opId === id);
+    setUndoOp({ ops, ventas });
+    setOps(ops.filter((o) => o.id !== id));
+    if (vLig) setVentas(ventas.filter((x) => x.opId !== id));
+    if (ultimaOp?.opId === id) setUltimaOp(null);
+    setDelOp(null);
+    flash(`Registro eliminado${vLig ? " (y su venta vinculada)" : ""}. El plano NO se modifica; para revertir una operación recién confirmada usa Deshacer.`);
+  };
+  const saveEditOp = () => {
+    if (!editOp.fecha || editOp.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
+    setUndoOp({ ops, ventas });
+    setOps(ops.map((o) => o.id === editOp.id ? { ...o, fecha: editOp.fecha, nota: editOp.nota } : o));
+    setEditOp(null);
+  };
+  const deshacerOp = () => { if (!undoOp) return; setOps(undoOp.ops); setVentas(undoOp.ventas); setUndoOp(null); flash("Edición/borrado deshecho."); };
+
+  const registrarLote = () => {
+    const n = parseInt(op.n), nD = parseInt(op.nDest || op.n);
+    if (!n || n <= 0) return flash("Cantidad inválida.");
+    if (!op.fecha || op.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
+    const o = { ...op, id: Date.now(), n, nDest: nD, bateaId: +op.bateaId, bateaDestId: +op.bateaDestId };
+    let fases;
+    if (o.tipo === "venta") {
+      const e = parseFloat(o.veur) || 0;
+      o.base = o.vmodo === "sacos"
+        ? (parseFloat(o.vsacos) || 0) * 10 * e
+        : (parseFloat(o.vkg) || 0) * (1 - (parseFloat(o.vdesct) || 0) / 100) * e;
+      if (o.base <= 0) return flash("Faltan datos de la venta (cantidad y €/kg).");
+      fases = [{ modo: "quitar", bateaId: o.bateaId, cat: "venta", n }];
+    }
+    else if (o.tipo === "siembra") fases = [{ modo: "poner", bateaId: o.bateaId, cat: o.cat, n }];
+    else if (o.tipo === "ajuste") fases = [{ modo: o.dir, bateaId: o.bateaId, cat: o.cat, n }];
+    else if (o.tipo === "movimiento") fases = [
+      { modo: "quitar", bateaId: o.bateaId, cat: o.cat, n },
+      { modo: "poner", bateaId: o.bateaDestId, cat: o.cat, n },
+    ];
+    else fases = [ // desdoble: batea origen y destino independientes
+      { modo: "quitar", bateaId: o.bateaId, cat: o.cat, n },
+      { modo: "poner", bateaId: o.bateaDestId, cat: o.catDest, n: nD },
+    ];
+    // Quitar más de lo que existe: imposible físicamente → se bloquea (no es sobrecapacidad).
+    for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < f.n)
+      return flash(`${bn(f.bateaId)}: solo hay ${stock(bx(f.bateaId), f.cat)} ${CAT[f.cat].label}.`);
+    setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas) });
+  };
+
+  const faseActual = pend && pend.fases[pend.fase];
+  const toggleCell = (k, modo) => {
+    setPend((p) => {
+      const s = new Set(p.sel);
+      if (modo === "del") s.delete(k);
+      else if (!s.has(k) && s.size < p.fases[p.fase].n) s.add(k);
+      return { ...p, sel: s };
+    });
+  };
+  // Fecha del lote de una celda (para ordenar por antigüedad); sin lote conocido → muy antigua.
+  const fechaCelda = (b, k) => {
+    const o = ops.find((x) => x.id === b.lotes?.[k]);
+    return o?.fecha || "0000-00-00";
+  };
+  // Preselecciona hasta n celdas para una fase; al retirar, las más antiguas por fecha primero.
+  const preSel = (fase, base) => {
+    const b = bx(fase.bateaId), s = base ? new Set(base) : new Set();
+    const candidatas = [];
+    for (let r = 0; r < b.largo; r++)
+      for (let c = 0; c < b.ancho; c++) {
+        const k = `${r}-${c}`, cat = b.celdas[k];
+        if (b.bloq?.[k]) continue;
+        if (fase.modo === "poner" ? !cat : cat === fase.cat) candidatas.push(k);
+      }
+    if (fase.modo !== "poner") // retirar: prioriza las cuerdas más antiguas por fecha
+      candidatas.sort((a, b2) => fechaCelda(b, a).localeCompare(fechaCelda(b, b2)));
+    for (const k of candidatas) { if (s.size >= fase.n) break; s.add(k); }
+    return s;
+  };
+  // Preselección por defecto solo al retirar (poner se deja al usuario/selección auto manual).
+  const selInicial = (fase) => fase.modo === "poner" ? new Set() : preSel(fase);
+  const autoSel = () => setPend({ ...pend, sel: preSel(faseActual, pend.sel) });
+
+  const cancelarOp = () => {
+    setBateas(pend.snap);
+    setPend(null);
+    flash("Operación cancelada. Plano restaurado.");
+  };
+
+  const confirmarFase = () => {
+    const f = faseActual, resto = f.n - pend.sel.size;
+    const bs = clon(bateas);
+    const b = bs.find((x) => x.id === f.bateaId);
+    if (f.modo === "poner") {
+      pend.sel.forEach((k) => { b.celdas[k] = f.cat; b.lotes[k] = pend.op.id; });
+      if (resto > 0) { // sobrecapacidad o sin ubicar: se registra igual + aviso
+        b.extra[f.cat] += resto;
+        flash(`${b.nombre}: ${resto} cuerdas sin celda libre → registradas sin ubicar (posible sobrecapacidad).`);
+      }
+    } else {
+      pend.sel.forEach((k) => { delete b.celdas[k]; delete b.lotes[k]; });
+      if (resto > 0) {
+        const deExtra = Math.min(resto, b.extra[f.cat]);
+        b.extra[f.cat] -= deExtra;
+        if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} celdas más de ${CAT[f.cat].label}.`);
+      }
+    }
+    setBateas(bs);
+    if (pend.fase + 1 < pend.fases.length) setPend({ ...pend, fase: pend.fase + 1, sel: selInicial(pend.fases[pend.fase + 1]) });
+    else {
+      const o = pend.op;
+      let ventaId = null;
+      if (o.tipo === "venta") {
+        ventaId = Date.now() + 1;
+        setVentas((vs) => [{
+          id: ventaId, opId: o.id, bateaId: o.bateaId, fecha: o.fecha, modo: o.vmodo, sacos: o.vsacos, kgBrutos: o.vkg,
+          desct: o.vdesct, eurkg: o.veur, persona: o.vpersona, comprador: o.vcomprador,
+          estado: "pendiente", base: o.base, total: totalVenta(o.base),
+        }, ...vs]);
+      }
+      setOps([o, ...ops]);
+      setUltimaOp({ snap: pend.snap, opId: o.id, ventaId });
+      setPend(null);
+      setOp({ ...op, n: "", nDest: "", nota: "", vsacos: "", vkg: "", vdesct: "", veur: "" });
+      // Aviso de límite lógico superado en las bateas tocadas por la operación
+      const tocadas = [...new Set(pend.fases.map((x) => x.bateaId))];
+      const avisos = tocadas.flatMap((id) => exceso(bs.find((x) => x.id === id)).map((e) => `${bs.find((x) => x.id === id).nombre}: ${fmtN(e.actual)} ${e.tipo} (máx. ${fmtN(e.lim)}, +${fmtN(e.n)})`));
+      if (avisos.length) flash(`Límite superado — ${avisos.join(" · ")}.`);
+    }
+  };
+
+  // ── Ventas (se crean desde Operaciones → Venta/cosecha) ──
+  const [editV, setEditV] = useState(null); // copia editable de la fila
+  const [delV, setDelV] = useState(null);
+  const [undoVenta, setUndoVenta] = useState(null); // snapshot ventas previo a editar/borrar
+  const saveEditV = () => {
+    if (!editV.fecha || editV.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
+    const x0 = ventas.find((x) => x.id === editV.id);
+    const e = parseFloat(editV.eurkg) || 0;
+    const base = x0.modo === "sacos"
+      ? (parseFloat(editV.sacos) || 0) * 10 * e
+      : (parseFloat(editV.kgBrutos) || 0) * (1 - (parseFloat(editV.desct) || 0) / 100) * e;
+    if (base <= 0) return flash("Faltan datos de la venta (cantidad y €/kg).");
+    setUndoVenta(ventas);
+    setVentas(ventas.map((x) => x.id === editV.id
+      ? { ...x, fecha: editV.fecha, sacos: editV.sacos, kgBrutos: editV.kgBrutos, desct: editV.desct, eurkg: editV.eurkg, persona: editV.persona, comprador: editV.comprador, base, total: totalVenta(base) }
+      : x));
+    setEditV(null);
+    flash("Venta actualizada.");
+  };
+  const borrarVenta = (id) => { setUndoVenta(ventas); setVentas(ventas.filter((x) => x.id !== id)); setDelV(null); };
+  const deshacerVenta = () => { if (!undoVenta) return; setVentas(undoVenta); setUndoVenta(null); flash("Edición/borrado deshecho."); };
+  const toggleCobro = (id) => setVentas(ventas.map((x) => x.id === id ? { ...x, estado: x.estado === "cobrado" ? "pendiente" : "cobrado", fechaCobro: x.estado === "cobrado" ? null : hoy() } : x));
+  // ── Filtros ──
+  const [fo, setFo] = useState({ desde: "", hasta: "", tipo: "", bateaId: "" });
+  const opsF = ops.filter((o) =>
+    (!fo.desde || o.fecha >= fo.desde) && (!fo.hasta || o.fecha <= fo.hasta) &&
+    (!fo.tipo || o.tipo === fo.tipo) &&
+    (!fo.bateaId || o.bateaId === +fo.bateaId || (["movimiento", "desdoble"].includes(o.tipo) && o.bateaDestId === +fo.bateaId)));
+  const [fv, setFv] = useState({ desde: "", hasta: "", estado: "", q: "", modo: "", cobroDesde: "", cobroHasta: "" });
+  const ventasF = ventas.filter((x) =>
+    (!fv.desde || x.fecha >= fv.desde) && (!fv.hasta || x.fecha <= fv.hasta) &&
+    (!fv.estado || x.estado === fv.estado) && (!fv.modo || x.modo === fv.modo) &&
+    (!fv.cobroDesde || (x.fechaCobro && x.fechaCobro >= fv.cobroDesde)) &&
+    (!fv.cobroHasta || (x.fechaCobro && x.fechaCobro <= fv.cobroHasta)) &&
+    (!fv.q || `${x.persona} ${x.comprador}`.toLowerCase().includes(fv.q.toLowerCase())));
+  const sum = (est) => ventasF.filter((x) => !est || x.estado === est).reduce((s, x) => s + x.total, 0);
+
+  // ── Filtros Resumen / Análisis ──
+  const [fr, setFr] = useState({ desde: "", hasta: "", tipo: "", bateas: [] });
+  const [fa, setFa] = useState({ desde: "", hasta: "", bateas: [], modo: "" });
+  const enB = (lista, ...ids) => lista.length === 0 || ids.some((i) => lista.includes(i));
+  const BChips = ({ f, setF }) => (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      {bateas.map((b) => {
+        const on = f.bateas.includes(b.id);
+        return (
+          <button key={b.id} onClick={() => setF({ ...f, bateas: on ? f.bateas.filter((i) => i !== b.id) : [...f.bateas, b.id] })}
+            style={{ background: on ? C.rope : "transparent", color: on ? C.ink : C.text, border: `1px solid ${on ? C.rope : C.line}`, borderRadius: 20, padding: "4px 12px", fontSize: 12, cursor: "pointer" }}>
+            {b.nombre}
+          </button>
+        );
+      })}
+      {f.bateas.length === 0 && <span style={{ color: C.mut, fontSize: 12 }}>todas</span>}
+    </div>
+  );
+  const FechaFiltro = ({ f, setF }) => (
+    <>
+      <Field label="Desde" w={140}><input style={inp} type="date" value={f.desde} onChange={(e) => setF({ ...f, desde: e.target.value })} /></Field>
+      <Field label="Hasta" w={140}><input style={inp} type="date" value={f.hasta} onChange={(e) => setF({ ...f, hasta: e.target.value })} /></Field>
+    </>
+  );
+
+  const tabs = [["bateas", "Bateas"], ["ops", "Operaciones"], ["ventas", "Ventas"], ["stats", "Resumen"], ["analisis", "Análisis"]];
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.ink, color: C.text, fontFamily: "Inter, sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Inter:wght@400;500;600&display=swap');
+        input:focus,select:focus{outline:2px solid ${C.rope};outline-offset:1px}
+        button:hover{filter:brightness(1.12)}
+        @media(prefers-reduced-motion:reduce){*{transition:none!important}}`}</style>
+
+      <header style={{ borderBottom: `1px solid ${C.line}`, padding: "20px 24px 0" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+          <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 34, letterSpacing: "0.06em", textTransform: "uppercase", margin: 0 }}>Cuaderno de Batea</h1>
+          <span style={{ color: C.mut, fontSize: 13 }}>registro por lotes · cuerdas · ventas</span>
+        </div>
+        <nav style={{ display: "flex", gap: 4, marginTop: 16 }}>
+          {tabs.map(([k, t]) => (
+            <button key={k} onClick={() => setTab(k)} style={{
+              background: "transparent", border: "none", cursor: "pointer",
+              fontFamily: "'Barlow Condensed',sans-serif", fontSize: 17, fontWeight: 600,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              color: tab === k ? C.text : C.mut, padding: "8px 14px",
+              borderBottom: `3px solid ${tab === k ? C.rope : "transparent"}`,
+            }}>{t}</button>
+          ))}
+        </nav>
+      </header>
+
+      {aviso && (
+        <div style={{ margin: "12px 24px 0", padding: "10px 14px", background: "#3A2323", border: `1px solid ${C.warn}`, borderRadius: 6, fontSize: 13, color: "#F2C9BE" }}>{aviso}</div>
+      )}
+
+      <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
+
+        {/* ── BATEAS ── */}
+        {tab === "bateas" && flot && (() => {
+          const b = bx(flot.bateaId);
+          if (!b) return null;
+          return (
+            <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
+              <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                Flotadores — {b.nombre}
+              </h2>
+              <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
+                Marca las celdas ocupadas por flotadores: quedan anuladas permanentemente y no cuentan como capacidad. Marcadas: {flot.sel.size}.
+              </p>
+              <Grid b={{ ...b, bloq: {} }} sel={flot.sel} onCell={flotCell} maxW={480}
+                elegible={(k, cat) => !cat} />
+              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                <button style={btn(true)} onClick={saveFlot}>Guardar flotadores</button>
+                <button style={btn(false)} onClick={() => setFlot(null)}>Cancelar</button>
+              </div>
+            </div>
+          );
+        })()}
+        {tab === "bateas" && reub && (() => {
+          const b = bx(reub.bateaId);
+          if (!b) return null;
+          return (
+            <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
+              <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                Recolocar — {b.nombre}
+              </h2>
+              <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
+                {reub.cat
+                  ? `Ubicando ${CAT[reub.cat].label} sin ubicar (quedan ${b.extra[reub.cat]}): pulsa celdas libres.`
+                  : reub.sel.size
+                    ? `${reub.sel.size} cuerdas en el grupo: cada pulsación (o arrastre) sobre celdas libres mueve una, en orden de selección. Lote y nota se conservan.`
+                    : "Selecciona cuerdas (clic o arrastre) para formar el grupo; luego pulsa/arrastra sobre celdas libres para moverlas."}
+                {" · "}Celdas libres: <b>{fmtN(libres(b))}</b>
+              </p>
+              {extraTot(b) > 0 && !reub.sel.size && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                  {CATS.filter((c) => b.extra[c] > 0).map((c) => (
+                    <button key={c} style={{ ...btn(reub.cat === c), borderColor: CAT[c].color }}
+                      onClick={() => setReub({ ...reub, cat: reub.cat === c ? null : c, sel: new Set() })}>
+                      Ubicar {CAT[c].label} ({b.extra[c]})
+                    </button>
+                  ))}
+                </div>
+              )}
+              <Grid b={b} maxW={480} info={loteInfo(b)}
+                sel={reub.sel}
+                onCell={reubCell}
+                elegible={(k, cat, blq) => !blq && (reub.cat ? !cat : true)} />
+              <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                {reub.sel.size > 0 && <button style={btn(false)} onClick={() => setReub({ ...reub, sel: new Set() })}>Vaciar grupo</button>}
+                <button style={btn(true)} onClick={() => setReub(null)}>Terminar</button>
+              </div>
+            </div>
+          );
+        })()}
+        {tab === "bateas" && (
+          <>
+            <div style={{ display: "flex", gap: 18, fontSize: 12, color: C.mut, marginBottom: 18, flexWrap: "wrap" }}>
+              {CATS.map((c) => (
+                <span key={c} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 2, background: CAT[c].color, display: "inline-block" }} />{CAT[c].label}
+                </span>
+              ))}
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.line, display: "inline-block" }} />Libre
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: "#050E14", border: `1px solid ${C.line}`, display: "inline-block" }} />Flotador (anulada)
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(460px,1fr))", gap: 16 }}>
+              {bateas.map((b) => {
+                const oc = ocup(b), ext = extraTot(b), exc = exceso(b), sobre = exc.length > 0;
+                const enEdicion = edit?.id === b.id;
+                return (
+                  <div key={b.id} style={{ background: C.panel, border: `1px solid ${sobre ? C.warn : C.line}`, borderRadius: 10, padding: 18 }}>
+                    {enEdicion ? (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                        <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
+                        <Field label="Ancho" w={70}><input style={inp} type="number" value={edit.ancho} onChange={(e) => setEdit({ ...edit, ancho: e.target.value })} /></Field>
+                        <Field label="Largo" w={70}><input style={inp} type="number" value={edit.largo} onChange={(e) => setEdit({ ...edit, largo: e.target.value })} /></Field>
+                        <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                          <button style={btn(true)} onClick={saveEdit}>Guardar</button>
+                          <button style={btn(false)} onClick={() => { setEdit(null); abrirFlot(b); }}>Flotadores</button>
+                          {delBatea === b.id ? (
+                            <>
+                              <button style={{ ...btn(true), background: C.warn, borderColor: C.warn }} onClick={() => borrarBatea(b.id)}>¿Seguro? Sí, borrar</button>
+                              <button style={btn(false)} onClick={() => setDelBatea(null)}>No</button>
+                            </>
+                          ) : (
+                            <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={() => setDelBatea(b.id)}>Borrar</button>
+                          )}
+                          <button style={btn(false)} onClick={() => setEdit(null)}>Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                        <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", margin: 0 }}>{b.nombre}</h2>
+                        <span style={{ fontSize: 13, color: sobre ? C.warn : C.mut, whiteSpace: "nowrap" }}>
+                          {fmtN(oc)} / {fmtN(cap(b))} · {b.ancho}×{b.largo}
+                          <button onClick={() => setEdit({ id: b.id, nombre: b.nombre, ancho: b.ancho, largo: b.largo })}
+                            style={{ ...btn(false), padding: "2px 9px", marginLeft: 8, fontSize: 12 }}>Editar</button>
+                          <button onClick={() => setReub({ bateaId: b.id, sel: new Set(), cat: null })}
+                            style={{ ...btn(false), padding: "2px 9px", marginLeft: 6, fontSize: 12 }}>Recolocar</button>
+                        </span>
+                      </div>
+                    )}
+                    <div style={{ margin: "14px 0" }}><Grid b={b} maxW={640} info={loteInfo(b)} /></div>
+                    <div style={{ display: "flex", gap: 14, fontSize: 13, flexWrap: "wrap" }}>
+                      {CATS.map((c) => (
+                        <span key={c}><b style={{ color: CAT[c].color }}>{fmtN(stock(b, c))}</b> <span style={{ color: C.mut }}>{c === "desdoble" ? "mexilla" : c}</span></span>
+                      ))}
+                    </div>
+                    {(sobre || ext > 0) && (
+                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                        {exc.map((e) => (
+                          <Warn key={e.tipo}>Límite superado en {e.tipo}: {fmtN(e.actual)} cuerdas (máx. {fmtN(e.lim)}) → {fmtN(e.n)} por encima.</Warn>
+                        ))}
+                        {ext > 0 && <Warn>{fmtN(ext)} cuerdas sin ubicar en el plano.</Warn>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div style={{ background: C.panel2, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 10, justifyContent: "center" }}>
+                <Field label="Nueva batea"><input style={inp} placeholder="Nombre" value={nb.nombre} onChange={(e) => setNb({ ...nb, nombre: e.target.value })} /></Field>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Field label="Ancho (cuerdas)"><input style={inp} type="number" placeholder="20" value={nb.ancho} onChange={(e) => setNb({ ...nb, ancho: e.target.value })} /></Field>
+                  <Field label="Largo (cuerdas)"><input style={inp} type="number" placeholder="25" value={nb.largo} onChange={(e) => setNb({ ...nb, largo: e.target.value })} /></Field>
+                </div>
+                <button style={btn(true)} onClick={addBatea}>Añadir batea</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── OPERACIONES ── */}
+        {tab === "ops" && !pend && (
+          <>
+            <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 18 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Field label="Tipo">
+                  <select style={inp} value={op.tipo} onChange={(e) => setOp({ ...op, tipo: e.target.value })}>
+                    <option value="siembra">Siembra</option>
+                    <option value="desdoble">Desdoble</option>
+                    <option value="venta">Venta / cosecha</option>
+                    <option value="movimiento">Movimiento</option>
+                    <option value="ajuste">Ajuste de stock</option>
+                  </select>
+                </Field>
+                {op.tipo === "ajuste" && (
+                  <Field label="Ajuste">
+                    <select style={inp} value={op.dir} onChange={(e) => setOp({ ...op, dir: e.target.value })}>
+                      <option value="quitar">Quitar (pérdida / error)</option>
+                      <option value="poner">Añadir (error de registro)</option>
+                    </select>
+                  </Field>
+                )}
+                <Field label="Fecha"><input style={inp} type="date" max={hoy()} value={op.fecha} onChange={(e) => setOp({ ...op, fecha: e.target.value })} /></Field>
+                <Field label={["movimiento", "desdoble"].includes(op.tipo) ? "Batea origen" : "Batea"}>
+                  <select style={inp} value={op.bateaId} onChange={(e) => setOp({ ...op, bateaId: e.target.value })}>
+                    {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                  </select>
+                </Field>
+                {["movimiento", "desdoble"].includes(op.tipo) && (
+                  <Field label="Batea destino">
+                    <select style={inp} value={op.bateaDestId} onChange={(e) => setOp({ ...op, bateaDestId: e.target.value })}>
+                      {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                    </select>
+                  </Field>
+                )}
+                {op.tipo !== "venta" && (
+                  <Field label={op.tipo === "desdoble" ? "Cuerda origen" : "Tipo de cuerda"}>
+                    <select style={inp} value={op.cat} onChange={(e) => setOp({ ...op, cat: e.target.value })}>
+                      {CATS.map((c) => <option key={c} value={c}>{CAT[c].label}</option>)}
+                    </select>
+                  </Field>
+                )}
+                <Field label={op.tipo === "desdoble" ? "Cuerdas origen" : "Nº cuerdas"}>
+                  <input style={inp} type="number" min="1" placeholder="50" value={op.n} onChange={(e) => setOp({ ...op, n: e.target.value })} />
+                </Field>
+                {op.tipo === "desdoble" && (
+                  <>
+                    <Field label="Cuerda resultado">
+                      <select style={inp} value={op.catDest} onChange={(e) => setOp({ ...op, catDest: e.target.value })}>
+                        {CATS.map((c) => <option key={c} value={c}>{CAT[c].label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Cuerdas resultantes">
+                      <input style={inp} type="number" min="1" placeholder="100" value={op.nDest} onChange={(e) => setOp({ ...op, nDest: e.target.value })} />
+                    </Field>
+                  </>
+                )}
+                {op.tipo === "venta" && (
+                  <>
+                    <Field label="Modo venta">
+                      <select style={inp} value={op.vmodo} onChange={(e) => setOp({ ...op, vmodo: e.target.value })}>
+                        <option value="sacos">Sacos (10 kg)</option>
+                        <option value="granel">Granel (kg brutos)</option>
+                      </select>
+                    </Field>
+                    {op.vmodo === "sacos" ? (
+                      <Field label="Sacos"><input style={inp} type="number" placeholder="458" value={op.vsacos} onChange={(e) => setOp({ ...op, vsacos: e.target.value })} /></Field>
+                    ) : (
+                      <>
+                        <Field label="Kg brutos"><input style={inp} type="number" placeholder="14900" value={op.vkg} onChange={(e) => setOp({ ...op, vkg: e.target.value })} /></Field>
+                        <Field label="Descuento %"><input style={inp} type="number" placeholder="48" value={op.vdesct} onChange={(e) => setOp({ ...op, vdesct: e.target.value })} /></Field>
+                      </>
+                    )}
+                    <Field label="€ / kg"><input style={inp} type="number" step="0.001" placeholder="0,76" value={op.veur} onChange={(e) => setOp({ ...op, veur: e.target.value })} /></Field>
+                    <Field label="Persona"><input style={inp} placeholder="Román" value={op.vpersona} onChange={(e) => setOp({ ...op, vpersona: e.target.value })} /></Field>
+                    <Field label="Comprador"><input style={inp} placeholder="Udana" value={op.vcomprador} onChange={(e) => setOp({ ...op, vcomprador: e.target.value })} /></Field>
+                  </>
+                )}
+                <Field label="Nota"><input style={inp} placeholder="Opcional" value={op.nota} onChange={(e) => setOp({ ...op, nota: e.target.value })} /></Field>
+              </div>
+              <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <button style={btn(true)} onClick={registrarLote}>Registrar lote</button>
+                {ultimaOp && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn, marginLeft: 10 }} onClick={deshacer}>Deshacer última operación</button>}
+                {undoOp && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={deshacerOp}>Deshacer última edición/borrado</button>}
+                {op.tipo === "venta" && (() => {
+                  const e = parseFloat(op.veur) || 0;
+                  const base = op.vmodo === "sacos" ? (parseFloat(op.vsacos) || 0) * 10 * e
+                    : (parseFloat(op.vkg) || 0) * (1 - (parseFloat(op.vdesct) || 0) / 100) * e;
+                  return <span style={{ fontSize: 13, color: C.mut }}>Base {fmtEUR(base)} − {DESCT}% + IVA {IVA}% = <b style={{ color: C.foam, fontSize: 15 }}>{fmtEUR(totalVenta(base))}</b> · se anota en Ventas al confirmar la retirada</span>;
+                })()}
+              </div>
+            </div>
+
+            <h3 style={h3}>Historial</h3>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <Field label="Desde" w={140}><input style={inp} type="date" value={fo.desde} onChange={(e) => setFo({ ...fo, desde: e.target.value })} /></Field>
+              <Field label="Hasta" w={140}><input style={inp} type="date" value={fo.hasta} onChange={(e) => setFo({ ...fo, hasta: e.target.value })} /></Field>
+              <Field label="Tipo" w={140}>
+                <select style={inp} value={fo.tipo} onChange={(e) => setFo({ ...fo, tipo: e.target.value })}>
+                  <option value="">Todos</option><option value="siembra">Siembra</option><option value="desdoble">Desdoble</option>
+                  <option value="venta">Venta / cosecha</option><option value="movimiento">Movimiento</option><option value="ajuste">Ajuste</option>
+                </select>
+              </Field>
+              <Field label="Batea" w={140}>
+                <select style={inp} value={fo.bateaId} onChange={(e) => setFo({ ...fo, bateaId: e.target.value })}>
+                  <option value="">Todas</option>
+                  {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                </select>
+              </Field>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <button style={btn(false)} onClick={() => setFo({ desde: "", hasta: "", tipo: "", bateaId: "" })}>Limpiar</button>
+              </div>
+            </div>
+            {opsF.length === 0 ? (
+              <p style={{ color: C.mut, fontSize: 14 }}>Sin operaciones. Registra el primer lote arriba.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: C.mut, textAlign: "left" }}>
+                    {["Fecha", "Tipo", "Batea", "Detalle", "Nota", ""].map((h, i) => <th key={i} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {opsF.map((o) => {
+                    const det = o.tipo === "ajuste"
+                      ? `${o.dir === "poner" ? "+" : "−"}${o.n} ${CAT[o.cat].label}`
+                      : o.tipo === "desdoble"
+                      ? `${o.n} ${CAT[o.cat].label} → ${o.nDest} ${CAT[o.catDest].label} en ${bn(o.bateaDestId)}`
+                      : o.tipo === "movimiento"
+                        ? `${o.n} ${CAT[o.cat].label} → ${bn(o.bateaDestId)}`
+                        : `${o.n} ${o.tipo === "venta" ? "cuerdas de venta" : CAT[o.cat].label}`;
+                    return (
+                      <tr key={o.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                        <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
+                          {editOp?.id === o.id
+                            ? <input style={{ ...inp, padding: "4px 6px", width: 130 }} type="date" max={hoy()} value={editOp.fecha} onChange={(e) => setEditOp({ ...editOp, fecha: e.target.value })} />
+                            : o.fecha}
+                        </td>
+                        <td style={{ padding: "7px 8px", textTransform: "capitalize" }}>{o.tipo}</td>
+                        <td style={{ padding: "7px 8px" }}>{bn(o.bateaId)}</td>
+                        <td style={{ padding: "7px 8px" }}>{det}</td>
+                        <td style={{ padding: "7px 8px", color: C.mut }}>
+                          {editOp?.id === o.id
+                            ? <input style={{ ...inp, padding: "4px 6px" }} value={editOp.nota} onChange={(e) => setEditOp({ ...editOp, nota: e.target.value })} />
+                            : o.nota}
+                        </td>
+                        <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
+                          {editOp?.id === o.id ? (
+                            <>
+                              <button style={mini(C.foam)} onClick={saveEditOp}>Guardar</button>{" "}
+                              <button style={mini()} onClick={() => setEditOp(null)}>×</button>
+                            </>
+                          ) : delOp === o.id ? (
+                            <>
+                              <button style={mini(C.warn)} onClick={() => borrarOp(o.id)}>¿Seguro?</button>{" "}
+                              <button style={mini()} onClick={() => setDelOp(null)}>No</button>
+                            </>
+                          ) : (
+                            <>
+                              <button style={mini()} onClick={() => setEditOp({ id: o.id, fecha: o.fecha, nota: o.nota || "" })}>✎</button>{" "}
+                              <button style={mini(C.warn)} onClick={() => setDelOp(o.id)}>🗑</button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+
+        {/* ── COLOCACIÓN EN PLANO ── */}
+        {tab === "ops" && pend && (() => {
+          const f = faseActual, b = bx(f.bateaId);
+          const falta = f.n - pend.sel.size;
+          return (
+            <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18 }}>
+              <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                {f.modo === "poner" ? "Colocar" : "Retirar"} {f.n} × {CAT[f.cat].label} — {b.nombre}
+              </h2>
+              <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
+                Fase {pend.fase + 1} de {pend.fases.length} · marcadas {pend.sel.size} / {f.n}
+                {f.modo === "poner" && <> · celdas libres en {b.nombre}: <b>{fmtN(libres(b))}</b></>}
+                {f.modo === "poner" && falta > 0 && <> · las no ubicadas se registran igualmente con aviso</>}
+              </p>
+              {f.modo === "poner" && libres(b) < falta && (
+                <div style={{ marginBottom: 10 }}>
+                  <Warn>Solo quedan {fmtN(libres(b))} celdas libres para {falta} pendientes: {falta - libres(b)} se registrarán sin ubicar (sobrecapacidad) si confirmas así.</Warn>
+                </div>
+              )}
+              <Grid b={b} sel={pend.sel} onCell={toggleCell} maxW={480}
+                elegible={(k, cat, blq) => !blq && (pend.sel.has(k) || (f.modo === "poner" ? !cat : cat === f.cat))} />
+              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                <button style={btn(true)} onClick={confirmarFase}>
+                  Confirmar {f.modo === "poner" ? "colocación" : "retirada"}
+                </button>
+                <button style={btn(false)} onClick={autoSel}>Selección automática</button>
+                <button style={btn(false)} onClick={() => setPend({ ...pend, sel: new Set() })}>Limpiar</button>
+                <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={cancelarOp}>Cancelar operación</button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── VENTAS ── */}
+        {tab === "ventas" && (
+          <>
+            <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
+              {[["Total", sum()], ["Cobrado", sum("cobrado")], ["Pendiente", sum("pendiente")]].map(([t, n]) => (
+                <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 18px", minWidth: 150 }}>
+                  <div style={lbl}>{t}</div>
+                  <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 26, fontWeight: 700 }}>{fmtEUR(n)}</div>
+                </div>
+              ))}
+            </div>
+
+            <p style={{ color: C.mut, fontSize: 13, margin: "0 0 4px" }}>
+              Las ventas se anotan automáticamente al registrar una operación de <b>Venta / cosecha</b> en Operaciones.
+            </p>
+
+            <h3 style={h3}>Registro</h3>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <Field label="Desde" w={140}><input style={inp} type="date" value={fv.desde} onChange={(e) => setFv({ ...fv, desde: e.target.value })} /></Field>
+              <Field label="Hasta" w={140}><input style={inp} type="date" value={fv.hasta} onChange={(e) => setFv({ ...fv, hasta: e.target.value })} /></Field>
+              <Field label="Estado" w={130}>
+                <select style={inp} value={fv.estado} onChange={(e) => setFv({ ...fv, estado: e.target.value })}>
+                  <option value="">Todos</option><option value="cobrado">Cobrado</option><option value="pendiente">Pendiente</option>
+                </select>
+              </Field>
+              <Field label="Tipo" w={130}>
+                <select style={inp} value={fv.modo} onChange={(e) => setFv({ ...fv, modo: e.target.value })}>
+                  <option value="">Todos</option><option value="sacos">Bolsas</option><option value="granel">Granel</option>
+                </select>
+              </Field>
+              <Field label="Persona / comprador" w={170}><input style={inp} placeholder="Buscar…" value={fv.q} onChange={(e) => setFv({ ...fv, q: e.target.value })} /></Field>
+              <Field label="Cobrado desde" w={140}><input style={inp} type="date" value={fv.cobroDesde} onChange={(e) => setFv({ ...fv, cobroDesde: e.target.value })} /></Field>
+              <Field label="Cobrado hasta" w={140}><input style={inp} type="date" value={fv.cobroHasta} onChange={(e) => setFv({ ...fv, cobroHasta: e.target.value })} /></Field>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                <button style={btn(false)} onClick={() => setFv({ desde: "", hasta: "", estado: "", q: "", modo: "", cobroDesde: "", cobroHasta: "" })}>Limpiar</button>
+                <button style={btn(false)} onClick={() => descargarCSV("ventas.csv",
+                  ["Fecha", "Modo", "Sacos", "Kg brutos", "Descuento %", "€/kg", "Total", "Persona", "Comprador", "Estado", "Fecha cobro"],
+                  ventasF.map((x) => [x.fecha, x.modo, x.sacos || "", x.kgBrutos || "", x.desct || "", x.eurkg, x.total.toFixed(2), x.persona, x.comprador, x.estado, x.fechaCobro || ""]))}>
+                  Exportar CSV
+                </button>
+                {undoVenta && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={deshacerVenta}>Deshacer última edición/borrado</button>}
+              </div>
+            </div>
+            {ventasF.length === 0 ? (
+              <p style={{ color: C.mut, fontSize: 14 }}>Sin ventas registradas.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: C.mut, textAlign: "left" }}>
+                    {["Fecha", "Detalle", "€/kg", "Total", "Persona", "Comprador", "Estado", ""].map((h, i) => <th key={i} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {ventasF.map((x) => {
+                    const ed = editV?.id === x.id;
+                    const cIn = { ...inp, padding: "4px 6px" };
+                    return (
+                    <tr key={x.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                      <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
+                        {ed ? <input style={{ ...cIn, width: 130 }} type="date" max={hoy()} value={editV.fecha} onChange={(e) => setEditV({ ...editV, fecha: e.target.value })} /> : x.fecha}
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        {ed
+                          ? (x.modo === "sacos"
+                            ? <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                                <input style={{ ...cIn, width: 80 }} type="number" value={editV.sacos} onChange={(e) => setEditV({ ...editV, sacos: e.target.value })} /> sacos
+                              </span>
+                            : <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                                <input style={{ ...cIn, width: 90 }} type="number" value={editV.kgBrutos} onChange={(e) => setEditV({ ...editV, kgBrutos: e.target.value })} /> kg −
+                                <input style={{ ...cIn, width: 60 }} type="number" value={editV.desct} onChange={(e) => setEditV({ ...editV, desct: e.target.value })} /> %
+                              </span>)
+                          : (x.modo === "sacos" ? `${fmtN(+x.sacos)} sacos` : `${fmtN(+x.kgBrutos)} kg (−${x.desct}%)`)}
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        {ed ? <input style={{ ...cIn, width: 75 }} type="number" step="0.001" value={editV.eurkg} onChange={(e) => setEditV({ ...editV, eurkg: e.target.value })} /> : x.eurkg}
+                      </td>
+                      <td style={{ padding: "7px 8px", fontWeight: 600 }}>{fmtEUR(x.total)}</td>
+                      <td style={{ padding: "7px 8px" }}>
+                        {ed ? <input style={{ ...cIn, width: 90 }} value={editV.persona} onChange={(e) => setEditV({ ...editV, persona: e.target.value })} /> : x.persona}
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        {ed ? <input style={{ ...cIn, width: 90 }} value={editV.comprador} onChange={(e) => setEditV({ ...editV, comprador: e.target.value })} /> : x.comprador}
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        <button onClick={() => toggleCobro(x.id)} style={{
+                          background: "transparent", cursor: "pointer", borderRadius: 20,
+                          border: `1px solid ${x.estado === "cobrado" ? C.foam : C.warn}`,
+                          color: x.estado === "cobrado" ? C.foam : C.warn,
+                          padding: "3px 12px", fontSize: 12,
+                        }}>{x.estado}</button>
+                        {x.estado === "cobrado" && x.fechaCobro && <div style={{ color: C.mut, fontSize: 11, marginTop: 3 }}>{x.fechaCobro}</div>}
+                      </td>
+                      <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
+                        {ed ? (
+                          <>
+                            <button style={mini(C.foam)} onClick={saveEditV}>Guardar</button>{" "}
+                            <button style={mini()} onClick={() => setEditV(null)}>×</button>
+                          </>
+                        ) : delV === x.id ? (
+                          <>
+                            <button style={mini(C.warn)} onClick={() => borrarVenta(x.id)}>¿Seguro?</button>{" "}
+                            <button style={mini()} onClick={() => setDelV(null)}>No</button>
+                          </>
+                        ) : (
+                          <>
+                            <button style={mini()} onClick={() => setEditV({ id: x.id, fecha: x.fecha, sacos: x.sacos || "", kgBrutos: x.kgBrutos || "", desct: x.desct || "", eurkg: x.eurkg || "", persona: x.persona || "", comprador: x.comprador || "" })}>✎</button>{" "}
+                            <button style={mini(C.warn)} onClick={() => setDelV(x.id)}>🗑</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>);
+                  })}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+
+        {/* ── ANÁLISIS ── */}
+        {tab === "stats" && (() => {
+          const opsR = ops.filter((o) =>
+            (!fr.desde || o.fecha >= fr.desde) && (!fr.hasta || o.fecha <= fr.hasta) &&
+            (!fr.tipo || o.tipo === fr.tipo) && enB(fr.bateas, o.bateaId, o.bateaDestId));
+          const ventasR = ventas.filter((x) =>
+            (!fr.desde || x.fecha >= fr.desde) && (!fr.hasta || x.fecha <= fr.hasta) && enB(fr.bateas, x.bateaId));
+          const stockTot = (c) => bateas.reduce((s, b) => s + stock(b, c), 0);
+          const capTot = bateas.length * capLog();
+          const ocupTot = bateas.reduce((s, b) => s + ocup(b), 0);
+          const kpis = [
+            ["Cuerdas de venta listas", fmtN(stockTot("venta")), C.foam],
+            ["Mexilla en curso", fmtN(stockTot("desdoble")), C.pink],
+            ["Colectoras", fmtN(stockTot("colectora")), C.rope],
+            ["Ocupación total", `${fmtN(ocupTot)} / ${fmtN(capTot)} (${capTot ? Math.round((ocupTot / capTot) * 100) : 0}%)`, ocupTot > capTot ? C.warn : C.text],
+            ["Facturado (filtro)", fmtEUR(ventasR.reduce((s, x) => s + x.total, 0)), C.text],
+            ["Pendiente de cobro (filtro)", fmtEUR(ventasR.filter((x) => x.estado === "pendiente").reduce((s, x) => s + x.total, 0)), C.warn],
+          ];
+          return (
+            <>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14 }}>
+                <FechaFiltro f={fr} setF={setFr} />
+                <Field label="Operación" w={150}>
+                  <select style={inp} value={fr.tipo} onChange={(e) => setFr({ ...fr, tipo: e.target.value })}>
+                    <option value="">Todas</option><option value="siembra">Siembra</option><option value="desdoble">Desdoble</option>
+                    <option value="venta">Venta / cosecha</option><option value="movimiento">Movimiento</option><option value="ajuste">Ajuste</option>
+                  </select>
+                </Field>
+                <Field label="Bateas" w={220}><BChips f={fr} setF={setFr} /></Field>
+                <button style={btn(false)} onClick={() => setFr({ desde: "", hasta: "", tipo: "", bateas: [] })}>Limpiar</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 14 }}>
+                {kpis.map(([t, v, col]) => (
+                  <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
+                    <div style={lbl}>{t}</div>
+                    <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 24, fontWeight: 700, color: col }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <h3 style={h3}>Stock por batea</h3>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: C.mut, textAlign: "left" }}>
+                    {["Batea", "Colectora", "Mexilla", "Venta", "Ocupación", "Capacidad"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {bateas.map((b) => (
+                    <tr key={b.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                      <td style={{ padding: "7px 8px" }}>{b.nombre}</td>
+                      <td style={{ padding: "7px 8px", color: C.rope }}>{fmtN(stock(b, "colectora"))}</td>
+                      <td style={{ padding: "7px 8px", color: C.pink }}>{fmtN(stock(b, "desdoble"))}</td>
+                      <td style={{ padding: "7px 8px", color: C.foam }}>{fmtN(stock(b, "venta"))}</td>
+                      <td style={{ padding: "7px 8px", color: exceso(b).length ? C.warn : C.text }}>{fmtN(ocup(b))}</td>
+                      <td style={{ padding: "7px 8px", color: C.mut }}>{fmtN(capLog())}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          );
+        })()}
+
+        {/* ── ANÁLISIS ── */}
+        {tab === "analisis" && (() => {
+          const vops = ops.filter((o) => o.tipo === "venta" &&
+            (!fa.desde || o.fecha >= fa.desde) && (!fa.hasta || o.fecha <= fa.hasta) &&
+            enB(fa.bateas, o.bateaId) && (!fa.modo || o.vmodo === fa.modo));
+          const kgOp = (o) => o.vmodo === "sacos"
+            ? (parseFloat(o.vsacos) || 0) * 10
+            : (parseFloat(o.vkg) || 0) * (1 - (parseFloat(o.vdesct) || 0) / 100);
+          const cuerdas = vops.reduce((s, o) => s + o.n, 0);
+          const kg = vops.reduce((s, o) => s + kgOp(o), 0);
+          const eur = vops.reduce((s, o) => s + totalVenta(o.base || 0), 0);
+          const base = vops.reduce((s, o) => s + (o.base || 0), 0);
+          const sacosOps = vops.filter((o) => o.vmodo === "sacos");
+          const sacos = sacosOps.reduce((s, o) => s + (parseFloat(o.vsacos) || 0), 0);
+          const cuerdasSacos = sacosOps.reduce((s, o) => s + o.n, 0);
+          const granelOps = vops.filter((o) => o.vmodo === "granel");
+          const kgBrutos = granelOps.reduce((s, o) => s + (parseFloat(o.vkg) || 0), 0);
+          const desctPond = kgBrutos > 0
+            ? granelOps.reduce((s, o) => s + (parseFloat(o.vdesct) || 0) * (parseFloat(o.vkg) || 0), 0) / kgBrutos
+            : null;
+          const dec = (n, d = 1) => n.toLocaleString("es-ES", { maximumFractionDigits: d });
+          const stats = [
+            ["Ventas", fmtN(vops.length), C.text],
+            ["Cuerdas vendidas", fmtN(cuerdas), C.foam],
+            ["Kg vendidos", dec(kg, 0), C.text],
+            ["Kg / cuerda", cuerdas > 0 ? dec(kg / cuerdas) : "—", C.foam],
+            ["Sacos / cuerda", cuerdasSacos > 0 ? dec(sacos / cuerdasSacos) : "—", C.rope],
+            ["Precio medio €/kg", kg > 0 ? dec(base / kg, 3) : "—", C.text],
+            ["Descuento medio %", desctPond !== null ? dec(desctPond) : "—", C.pink],
+            ["€ / cuerda", cuerdas > 0 ? fmtEUR(eur / cuerdas) : "—", C.foam],
+            ["Facturación", fmtEUR(eur), C.text],
+          ];
+          const porBatea = bateas.map((b) => {
+            const bo = vops.filter((o) => o.bateaId === b.id);
+            const bc = bo.reduce((s, o) => s + o.n, 0), bk = bo.reduce((s, o) => s + kgOp(o), 0);
+            return { b, n: bo.length, bc, bk, be: bo.reduce((s, o) => s + totalVenta(o.base || 0), 0) };
+          }).filter((r) => r.n > 0);
+          const porMes = Object.values(vops.reduce((acc, o) => {
+            const m = o.fecha.slice(0, 7);
+            acc[m] = acc[m] || { m, kg: 0, eur: 0 };
+            acc[m].kg += kgOp(o);
+            acc[m].eur += totalVenta(o.base || 0);
+            return acc;
+          }, {})).sort((a, b) => a.m.localeCompare(b.m));
+          return (
+            <>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14 }}>
+                <FechaFiltro f={fa} setF={setFa} />
+                <Field label="Tipo" w={130}>
+                  <select style={inp} value={fa.modo} onChange={(e) => setFa({ ...fa, modo: e.target.value })}>
+                    <option value="">Todos</option><option value="sacos">Bolsas</option><option value="granel">Granel</option>
+                  </select>
+                </Field>
+                <Field label="Bateas" w={220}><BChips f={fa} setF={setFa} /></Field>
+                <button style={btn(false)} onClick={() => setFa({ desde: "", hasta: "", bateas: [], modo: "" })}>Limpiar</button>
+                <button style={btn(false)} onClick={() => descargarCSV("analisis_ventas.csv",
+                  ["Fecha", "Batea", "Modo", "Cuerdas", "Kg", "€ base", "€ total", "Nota"],
+                  vops.map((o) => [o.fecha, bn(o.bateaId), o.vmodo, o.n, dec(kgOp(o), 2), (o.base || 0).toFixed(2), totalVenta(o.base || 0).toFixed(2), o.nota || ""]))}>
+                  Exportar CSV
+                </button>
+              </div>
+              {vops.length === 0 ? (
+                <p style={{ color: C.mut, fontSize: 14 }}>No hay ventas en el rango filtrado. Las estadísticas se calculan sobre operaciones de Venta / cosecha.</p>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 14 }}>
+                    {stats.map(([t, v, col]) => (
+                      <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
+                        <div style={lbl}>{t}</div>
+                        <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 24, fontWeight: 700, color: col }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {porBatea.length > 0 && (
+                    <>
+                      <h3 style={h3}>Rendimiento por batea</h3>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ color: C.mut, textAlign: "left" }}>
+                            {["Batea", "Ventas", "Cuerdas", "Kg", "Kg/cuerda", "€", "€/cuerda"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {porBatea.map(({ b, n, bc, bk, be }) => (
+                            <tr key={b.id} style={{ borderBottom: `1px solid ${C.line}` }}>
+                              <td style={{ padding: "7px 8px" }}>{b.nombre}</td>
+                              <td style={{ padding: "7px 8px" }}>{n}</td>
+                              <td style={{ padding: "7px 8px" }}>{fmtN(bc)}</td>
+                              <td style={{ padding: "7px 8px" }}>{dec(bk, 0)}</td>
+                              <td style={{ padding: "7px 8px", color: C.foam }}>{bc > 0 ? dec(bk / bc) : "—"}</td>
+                              <td style={{ padding: "7px 8px" }}>{fmtEUR(be)}</td>
+                              <td style={{ padding: "7px 8px", color: C.foam }}>{bc > 0 ? fmtEUR(be / bc) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
+                  {porMes.length > 1 && (
+                    <>
+                      <h3 style={h3}>Evolución mensual</h3>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 16 }}>
+                        <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
+                          <div style={lbl}>Kg vendidos / mes</div>
+                          <BarChart data={porMes} valueKey="kg" color={C.foam} />
+                        </div>
+                        <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
+                          <div style={lbl}>Facturación € / mes</div>
+                          <BarChart data={porMes} valueKey="eur" color={C.rope} />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          );
+        })()}
+      </main>
+
+      <footer style={{ padding: "10px 24px 20px", color: C.mut, fontSize: 12, borderTop: `1px solid ${C.line}` }}>
+        Prototipo — datos en memoria (se pierden al recargar). Siguiente paso: persistencia en Supabase con RLS.
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<GestionBatea/>);
+</script></body></html>
