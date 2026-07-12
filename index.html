@@ -9,6 +9,17 @@
 <script type="text/babel" data-presets="react">
 const {useState,useMemo,useEffect,useRef}=React;
 const CONFIG_KEY = "batea_firebase_config";
+// Config de Firebase del proyecto (pública por diseño: la seguridad la dan el login + las reglas
+// de Firestore, no ocultar estas claves). Si algún día cambias de proyecto, puedes sobreescribirla
+// desde la pantalla de configuración (botón "Cambiar configuración de Firebase" en el login).
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBvu2hTEhcsoRZdPqvxR7MGBe281jF2rJo",
+  authDomain: "cuaderno-batea.firebaseapp.com",
+  projectId: "cuaderno-batea",
+  storageBucket: "cuaderno-batea.firebasestorage.app",
+  messagingSenderId: "1098709890008",
+  appId: "1:1098709890008:web:555fbbcf998b45039378ad",
+};
 
 // ─── Tokens ───────────────────────────────────────────────────────────────
 const C = {
@@ -247,7 +258,7 @@ const Pantalla = ({ children }) => (
   </div>
 );
 
-function ConfigSetup({ onSaved }) {
+function ConfigSetup({ onSaved, onCancel }) {
   const [texto, setTexto] = useState("");
   const [error, setError] = useState("");
   const guardar = () => {
@@ -261,6 +272,7 @@ function ConfigSetup({ onSaved }) {
       setError("No se pudo interpretar la configuración (" + e.message + "). Pega el objeto tal cual lo da la consola de Firebase.");
     }
   };
+  const usarPorDefecto = () => { localStorage.removeItem(CONFIG_KEY); onSaved(FIREBASE_CONFIG); };
   return (
     <Pantalla>
       <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 24, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 10px" }}>Configurar Firebase</h1>
@@ -270,7 +282,11 @@ function ConfigSetup({ onSaved }) {
       <textarea style={{ ...inp, minHeight: 150, fontFamily: "monospace", resize: "vertical" }} value={texto} onChange={(e) => setTexto(e.target.value)}
         placeholder={'{\n  apiKey: "…",\n  authDomain: "…",\n  projectId: "…",\n  storageBucket: "…",\n  messagingSenderId: "…",\n  appId: "…"\n}'} />
       {error && <p style={{ color: C.warn, fontSize: 13, marginTop: 8 }}>{error}</p>}
-      <button style={{ ...btn(true), marginTop: 14 }} onClick={guardar}>Guardar y continuar</button>
+      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button style={btn(true)} onClick={guardar}>Guardar y continuar</button>
+        <button style={mini()} onClick={usarPorDefecto}>Usar la del proyecto por defecto</button>
+        {onCancel && <button style={mini()} onClick={onCancel}>Cancelar</button>}
+      </div>
     </Pantalla>
   );
 }
@@ -279,7 +295,7 @@ const Cargando = ({ texto }) => (
   <Pantalla><p style={{ color: C.mut, fontSize: 14, margin: 0 }}>{texto || "Cargando…"}</p></Pantalla>
 );
 
-function Login() {
+function Login({ onReconfig }) {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [error, setError] = useState("");
@@ -302,16 +318,18 @@ function Login() {
       {error && <p style={{ color: C.warn, fontSize: 13, marginTop: 10 }}>{error}</p>}
       <button style={{ ...btn(true), marginTop: 14 }} disabled={cargando} onClick={entrar}>{cargando ? "Entrando…" : "Entrar"}</button>
       <div>
-        <button style={{ ...mini(), marginTop: 12 }} onClick={() => { localStorage.removeItem(CONFIG_KEY); location.reload(); }}>Cambiar configuración de Firebase</button>
+        <button style={{ ...mini(), marginTop: 12 }} onClick={onReconfig}>Cambiar configuración de Firebase</button>
       </div>
     </Pantalla>
   );
 }
 
 function Root() {
+  // Config fija por defecto; se puede sobreescribir desde la pantalla de configuración (localStorage manda).
   const [cfg, setCfg] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || "null"); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || "null") || FIREBASE_CONFIG; } catch { return FIREBASE_CONFIG; }
   });
+  const [reconfig, setReconfig] = useState(false);
   const [user, setUser] = useState(undefined); // undefined = comprobando sesión, null = sin sesión
 
   useEffect(() => {
@@ -322,9 +340,9 @@ function Root() {
     return unsub;
   }, [cfg]);
 
-  if (!cfg) return <ConfigSetup onSaved={setCfg} />;
+  if (reconfig || !cfg) return <ConfigSetup onSaved={(c) => { setReconfig(false); setCfg(c); }} onCancel={cfg ? () => setReconfig(false) : null} />;
   if (user === undefined) return <Cargando texto="Comprobando sesión…" />;
-  if (!user) return <Login />;
+  if (!user) return <Login onReconfig={() => setReconfig(true)} />;
   return <GestionBatea db={firebase.firestore()} />;
 }
 
