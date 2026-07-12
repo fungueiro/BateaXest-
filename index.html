@@ -5,7 +5,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-<style>body{margin:0}</style></head><body><div id="root"></div>
+<style>*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden}</style></head><body><div id="root"></div>
 <script type="text/babel" data-presets="react">
 const {useState,useMemo,useEffect,useRef}=React;
 const CONFIG_KEY = "batea_firebase_config";
@@ -800,7 +800,7 @@ function GestionBatea({ db }) {
           </div>
           <button style={mini()} onClick={() => firebase.auth().signOut()}>Salir ({firebase.auth().currentUser?.email})</button>
         </div>
-        <nav style={{ display: "flex", gap: 4, marginTop: 16 }}>
+        <nav style={{ display: "flex", gap: 4, marginTop: 16, flexWrap: "wrap" }}>
           {tabs.map(([k, t]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               background: "transparent", border: "none", cursor: "pointer",
@@ -902,7 +902,7 @@ function GestionBatea({ db }) {
               </span>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(460px,1fr))", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,460px),1fr))", gap: 16 }}>
               {bateas.map((b) => {
                 const oc = ocup(b), ext = extraTot(b), exc = exceso(b), sobre = exc.length > 0;
                 const alEdad = alertasEdad(b);
@@ -1144,7 +1144,7 @@ function GestionBatea({ db }) {
             {opsF.length === 0 ? (
               <p style={{ color: C.mut, fontSize: 14 }}>Sin operaciones. Registra el primer lote arriba.</p>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ color: C.mut, textAlign: "left" }}>
                     {["Fecha", "Tipo", "Batea", "Detalle", "Nota", ""].map((h, i) => <th key={i} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
@@ -1197,7 +1197,7 @@ function GestionBatea({ db }) {
                     );
                   })}
                 </tbody>
-              </table>
+              </table></div>
             )}
           </>
         )}
@@ -1289,7 +1289,7 @@ function GestionBatea({ db }) {
             {ventasF.length === 0 ? (
               <p style={{ color: C.mut, fontSize: 14 }}>Sin ventas registradas.</p>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ color: C.mut, textAlign: "left" }}>
                     {["Fecha", "Detalle", "€/kg", "Total", "Persona", "Comprador", "Estado", ""].map((h, i) => <th key={i} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
@@ -1357,7 +1357,7 @@ function GestionBatea({ db }) {
                     </tr>);
                   })}
                 </tbody>
-              </table>
+              </table></div>
             )}
           </>
         )}
@@ -1393,7 +1393,7 @@ function GestionBatea({ db }) {
                 <Field label="Bateas" w={220}><BChips f={fr} setF={setFr} /></Field>
                 <button style={btn(false)} onClick={() => setFr({ desde: "", hasta: "", tipo: "", bateas: [] })}>Limpiar</button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,200px),1fr))", gap: 14 }}>
                 {kpis.map(([t, v, col]) => (
                   <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
                     <div style={lbl}>{t}</div>
@@ -1402,7 +1402,7 @@ function GestionBatea({ db }) {
                 ))}
               </div>
               <h3 style={h3}>Stock por batea</h3>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ color: C.mut, textAlign: "left" }}>
                     {["Batea", "Colectora", "Mexilla", "Venta", "Ocupación", "Capacidad"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
@@ -1420,7 +1420,7 @@ function GestionBatea({ db }) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <h3 style={h3}>Alertas de manejo (antigüedad)</h3>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
                 <Field label="Aviso colectora (meses)" w={160}>
@@ -1442,7 +1442,7 @@ function GestionBatea({ db }) {
                 return filas.length === 0 ? (
                   <p style={{ color: C.mut, fontSize: 14 }}>Sin cuerdas por encima del umbral de antigüedad ({limMeses.colectora} meses en colectora, {limMeses.desdoble} en mexilla, {limMeses.venta} en venta).</p>
                 ) : (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ color: C.mut, textAlign: "left" }}>
                         {["Batea", "Tipo", "Cuerdas afectadas", "Más antigua desde", "Umbral", "Sin fecha conocida"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
@@ -1460,7 +1460,7 @@ function GestionBatea({ db }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 );
               })()}
             </>
@@ -1532,7 +1532,7 @@ function GestionBatea({ db }) {
                 <p style={{ color: C.mut, fontSize: 14 }}>No hay ventas en el rango filtrado. Las estadísticas se calculan sobre operaciones de Venta / cosecha.</p>
               ) : (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 14 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,190px),1fr))", gap: 14 }}>
                     {stats.map(([t, v, col]) => (
                       <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
                         <div style={lbl}>{t}</div>
@@ -1543,7 +1543,7 @@ function GestionBatea({ db }) {
                   {porBatea.length > 0 && (
                     <>
                       <h3 style={h3}>Rendimiento por batea</h3>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                         <thead>
                           <tr style={{ color: C.mut, textAlign: "left" }}>
                             {["Batea", "Ventas", "Cuerdas", "Kg", "Kg/cuerda", "€", "€/cuerda"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
@@ -1562,13 +1562,13 @@ function GestionBatea({ db }) {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </table></div>
                     </>
                   )}
                   {porMes.length > 1 && (
                     <>
                       <h3 style={h3}>Evolución mensual</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 16 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: 16 }}>
                         <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 16px" }}>
                           <div style={lbl}>Kg vendidos / mes</div>
                           <BarChart data={porMes} valueKey="kg" color={C.foam} />
