@@ -2,9 +2,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>body{margin:0}</style></head><body><div id="root"></div>
 <script type="text/babel" data-presets="react">
-const {useState,useMemo}=React;
+const {useState,useMemo,useEffect,useRef}=React;
+const CONFIG_KEY = "batea_firebase_config";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────
 const C = {
@@ -70,6 +74,15 @@ const addCatalogo = (setLista, valor) => {
   setLista((xs) => (xs.some((x) => x.toLowerCase() === v.toLowerCase()) ? xs : [...xs, v]));
 };
 const delCatalogo = (setLista, valor) => setLista((xs) => xs.filter((x) => x !== valor));
+// Mensajes de error de Firebase Auth en español
+const mensajeErrorAuth = (code) => ({
+  "auth/invalid-email": "Email no válido.",
+  "auth/user-disabled": "Usuario deshabilitado.",
+  "auth/user-not-found": "Usuario o contraseña incorrectos.",
+  "auth/wrong-password": "Usuario o contraseña incorrectos.",
+  "auth/invalid-credential": "Usuario o contraseña incorrectos.",
+  "auth/too-many-requests": "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
+}[code] || "No se pudo iniciar sesión.");
 
 function seed(id, nombre, fill) {
   const b = nuevaBatea(id, nombre, 20, 25);
@@ -227,8 +240,96 @@ function Grid({ b, sel, onCell, elegible, info, maxW = 340 }) {
   );
 }
 
+// ─── Arranque: configuración de Firebase, carga y sesión ──────────────────
+const Pantalla = ({ children }) => (
+  <div style={{ minHeight: "100vh", background: C.ink, color: C.text, fontFamily: "Inter, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+    <div style={{ maxWidth: 460, width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 24 }}>{children}</div>
+  </div>
+);
+
+function ConfigSetup({ onSaved }) {
+  const [texto, setTexto] = useState("");
+  const [error, setError] = useState("");
+  const guardar = () => {
+    try {
+      const limpio = texto.trim().replace(/^const\s+firebaseConfig\s*=\s*/, "").replace(/;\s*$/, "");
+      const cfg = new Function(`"use strict"; return (${limpio});`)();
+      if (!cfg || !cfg.apiKey || !cfg.projectId) throw new Error("faltan apiKey / projectId");
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
+      onSaved(cfg);
+    } catch (e) {
+      setError("No se pudo interpretar la configuración (" + e.message + "). Pega el objeto tal cual lo da la consola de Firebase.");
+    }
+  };
+  return (
+    <Pantalla>
+      <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 24, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 10px" }}>Configurar Firebase</h1>
+      <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
+        Pega aquí el objeto <code>firebaseConfig</code> de tu proyecto (consola de Firebase → Configuración del proyecto → Tus apps → app web).
+      </p>
+      <textarea style={{ ...inp, minHeight: 150, fontFamily: "monospace", resize: "vertical" }} value={texto} onChange={(e) => setTexto(e.target.value)}
+        placeholder={'{\n  apiKey: "…",\n  authDomain: "…",\n  projectId: "…",\n  storageBucket: "…",\n  messagingSenderId: "…",\n  appId: "…"\n}'} />
+      {error && <p style={{ color: C.warn, fontSize: 13, marginTop: 8 }}>{error}</p>}
+      <button style={{ ...btn(true), marginTop: 14 }} onClick={guardar}>Guardar y continuar</button>
+    </Pantalla>
+  );
+}
+
+const Cargando = ({ texto }) => (
+  <Pantalla><p style={{ color: C.mut, fontSize: 14, margin: 0 }}>{texto || "Cargando…"}</p></Pantalla>
+);
+
+function Login() {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const entrar = async () => {
+    setError(""); setCargando(true);
+    try { await firebase.auth().signInWithEmailAndPassword(email, pass); }
+    catch (e) { setError(mensajeErrorAuth(e.code)); }
+    setCargando(false);
+  };
+  const onKey = (e) => { if (e.key === "Enter") entrar(); };
+  return (
+    <Pantalla>
+      <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 26, letterSpacing: "0.06em", textTransform: "uppercase", margin: "0 0 4px" }}>Cuaderno de Batea</h1>
+      <p style={{ color: C.mut, fontSize: 13, margin: "0 0 16px" }}>Inicia sesión para continuar.</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field label="Email"><input style={inp} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={onKey} /></Field>
+        <Field label="Contraseña"><input style={inp} type="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={onKey} /></Field>
+      </div>
+      {error && <p style={{ color: C.warn, fontSize: 13, marginTop: 10 }}>{error}</p>}
+      <button style={{ ...btn(true), marginTop: 14 }} disabled={cargando} onClick={entrar}>{cargando ? "Entrando…" : "Entrar"}</button>
+      <div>
+        <button style={{ ...mini(), marginTop: 12 }} onClick={() => { localStorage.removeItem(CONFIG_KEY); location.reload(); }}>Cambiar configuración de Firebase</button>
+      </div>
+    </Pantalla>
+  );
+}
+
+function Root() {
+  const [cfg, setCfg] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || "null"); } catch { return null; }
+  });
+  const [user, setUser] = useState(undefined); // undefined = comprobando sesión, null = sin sesión
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    try { firebase.firestore().settings({ ignoreUndefinedProperties: true }); } catch (e) {}
+    const unsub = firebase.auth().onAuthStateChanged(setUser);
+    return unsub;
+  }, [cfg]);
+
+  if (!cfg) return <ConfigSetup onSaved={setCfg} />;
+  if (user === undefined) return <Cargando texto="Comprobando sesión…" />;
+  if (!user) return <Login />;
+  return <GestionBatea db={firebase.firestore()} />;
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────
-function GestionBatea() {
+function GestionBatea({ db }) {
   const [tab, setTab] = useState("bateas");
   const [bateas, setBateas] = useState(seedBateas);
   const [ops, setOps] = useState([]);
@@ -241,6 +342,52 @@ function GestionBatea() {
   const [compradores, setCompradores] = useState(["Udana"]);
   const [catAbierto, setCatAbierto] = useState(false);
   const [limMeses, setLimMeses] = useState(LIM_MESES_DEFECTO); // umbrales de alerta por antigüedad, editables en Resumen
+
+  // ── Persistencia en Firestore (un único documento con todo el estado) ──
+  const docRef = useMemo(() => db.collection("cuaderno").doc("estado"), [db]);
+  const hydratedRef = useRef(false);
+  const lastSyncRef = useRef("");
+  const [cargandoDatos, setCargandoDatos] = useState(true);
+
+  useEffect(() => {
+    const unsub = docRef.onSnapshot((snap) => {
+      if (snap.exists) {
+        const d = snap.data() || {};
+        const datos = {
+          bateas: d.bateas || [], ops: d.ops || [], ventas: d.ventas || [],
+          personas: d.personas || ["Román"], compradores: d.compradores || ["Udana"],
+          limMeses: d.limMeses || LIM_MESES_DEFECTO,
+        };
+        lastSyncRef.current = JSON.stringify(datos);
+        setBateas(datos.bateas); setOps(datos.ops); setVentas(datos.ventas);
+        setPersonas(datos.personas); setCompradores(datos.compradores); setLimMeses(datos.limMeses);
+      } else {
+        // Primera vez que se usa esta base de datos: sembramos con los datos de ejemplo.
+        const inicial = { bateas: seedBateas, ops: [], ventas: [], personas: ["Román"], compradores: ["Udana"], limMeses: LIM_MESES_DEFECTO };
+        lastSyncRef.current = JSON.stringify(inicial);
+        docRef.set(inicial);
+      }
+      hydratedRef.current = true;
+      setCargandoDatos(false);
+    }, (err) => {
+      flash("Error de conexión con la base de datos: " + err.message);
+      hydratedRef.current = true;
+      setCargandoDatos(false);
+    });
+    return unsub;
+  }, [docRef]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const payload = { bateas, ops, ventas, personas, compradores, limMeses };
+    const json = JSON.stringify(payload);
+    if (json === lastSyncRef.current) return;
+    lastSyncRef.current = json;
+    const t = setTimeout(() => {
+      docRef.set(payload).catch((e) => flash("No se pudo guardar en la base de datos: " + e.message));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [bateas, ops, ventas, personas, compradores, limMeses, docRef]);
   const loteInfo = (b) => (k, cat) => {
     const op = ops.find((x) => x.id === b.lotes?.[k]);
     if (!op) return `${CAT[cat].label} · lote inicial`;
@@ -584,6 +731,8 @@ function GestionBatea() {
 
   const tabs = [["bateas", "Bateas"], ["ops", "Operaciones"], ["ventas", "Ventas"], ["stats", "Resumen"], ["analisis", "Análisis"]];
 
+  if (cargandoDatos) return <Cargando texto="Cargando datos…" />;
+
   return (
     <div style={{ minHeight: "100vh", background: C.ink, color: C.text, fontFamily: "Inter, sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Inter:wght@400;500;600&display=swap');
@@ -592,9 +741,12 @@ function GestionBatea() {
         @media(prefers-reduced-motion:reduce){*{transition:none!important}}`}</style>
 
       <header style={{ borderBottom: `1px solid ${C.line}`, padding: "20px 24px 0" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
-          <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 34, letterSpacing: "0.06em", textTransform: "uppercase", margin: 0 }}>Cuaderno de Batea</h1>
-          <span style={{ color: C.mut, fontSize: 13 }}>registro por lotes · cuerdas · ventas</span>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 34, letterSpacing: "0.06em", textTransform: "uppercase", margin: 0 }}>Cuaderno de Batea</h1>
+            <span style={{ color: C.mut, fontSize: 13 }}>registro por lotes · cuerdas · ventas</span>
+          </div>
+          <button style={mini()} onClick={() => firebase.auth().signOut()}>Salir ({firebase.auth().currentUser?.email})</button>
         </div>
         <nav style={{ display: "flex", gap: 4, marginTop: 16 }}>
           {tabs.map(([k, t]) => (
@@ -1390,5 +1542,5 @@ function GestionBatea() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<GestionBatea/>);
+ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
 </script></body></html>
