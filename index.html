@@ -59,8 +59,9 @@ const exceso = (b) => {
 const capLog = () => LIM_PROD + LIM_COL; // tope lógico de cuerdas por batea (500 + 100)
 const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, extra: { ...b.extra } }));
 const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
-// Alertas de manejo por antigüedad (ajustables): meses sin desdoblar / sin vender
-const LIM_MESES = { colectora: 8, desdoble: 12 };
+// Alertas de manejo por antigüedad: valores por defecto, ajustables desde la app (Resumen)
+const LIM_MESES_DEFECTO = { colectora: 8, desdoble: 12, venta: 3 };
+const MENSAJE_ALERTA = { colectora: "revisar desdoble", desdoble: "revisar venta", venta: "sin vender, revisar comprador" };
 const MAX_UNDO = 20;
 // Catálogo de personas/compradores: solo sugiere (datalist), no bloquea texto libre
 const addCatalogo = (setLista, valor) => {
@@ -239,6 +240,7 @@ function GestionBatea() {
   const [personas, setPersonas] = useState(["Román"]);
   const [compradores, setCompradores] = useState(["Udana"]);
   const [catAbierto, setCatAbierto] = useState(false);
+  const [limMeses, setLimMeses] = useState(LIM_MESES_DEFECTO); // umbrales de alerta por antigüedad, editables en Resumen
   const loteInfo = (b) => (k, cat) => {
     const op = ops.find((x) => x.id === b.lotes?.[k]);
     if (!op) return `${CAT[cat].label} · lote inicial`;
@@ -422,11 +424,11 @@ function GestionBatea() {
     const o = ops.find((x) => x.id === b.lotes?.[k]);
     return o?.fecha || "0000-00-00";
   };
-  // Alertas de manejo: cuerdas que llevan más tiempo del razonable en colectora/mexilla sin mover.
+  // Alertas de manejo: cuerdas que llevan más tiempo del razonable sin mover o sin vender.
   const alertasEdad = (b) => {
     const res = [];
-    for (const cat of ["colectora", "desdoble"]) {
-      const lim = LIM_MESES[cat];
+    for (const cat of ["colectora", "desdoble", "venta"]) {
+      const lim = limMeses[cat];
       let vencidas = 0, sinFecha = 0, antigua = null;
       for (const [k, c] of Object.entries(b.celdas)) {
         if (c !== cat) continue;
@@ -747,7 +749,7 @@ function GestionBatea() {
                         ))}
                         {ext > 0 && <Warn>{fmtN(ext)} cuerdas sin ubicar en el plano.</Warn>}
                         {alEdad.map((a) => (
-                          <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${a.antigua})` : ""} — revisar {a.cat === "colectora" ? "desdoble" : "venta"}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
+                          <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${a.antigua})` : ""} — {MENSAJE_ALERTA[a.cat]}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
                         ))}
                       </div>
                     )}
@@ -1216,10 +1218,25 @@ function GestionBatea() {
                 </tbody>
               </table>
               <h3 style={h3}>Alertas de manejo (antigüedad)</h3>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
+                <Field label="Aviso colectora (meses)" w={160}>
+                  <input style={inp} type="number" min="1" value={limMeses.colectora}
+                    onChange={(e) => setLimMeses({ ...limMeses, colectora: parseInt(e.target.value) || 1 })} />
+                </Field>
+                <Field label="Aviso mexilla (meses)" w={160}>
+                  <input style={inp} type="number" min="1" value={limMeses.desdoble}
+                    onChange={(e) => setLimMeses({ ...limMeses, desdoble: parseInt(e.target.value) || 1 })} />
+                </Field>
+                <Field label="Aviso venta sin vender (meses)" w={190}>
+                  <input style={inp} type="number" min="1" value={limMeses.venta}
+                    onChange={(e) => setLimMeses({ ...limMeses, venta: parseInt(e.target.value) || 1 })} />
+                </Field>
+                <button style={mini()} onClick={() => setLimMeses(LIM_MESES_DEFECTO)}>Restablecer por defecto</button>
+              </div>
               {(() => {
                 const filas = bateas.flatMap((b) => alertasEdad(b).map((a) => ({ b, ...a })));
                 return filas.length === 0 ? (
-                  <p style={{ color: C.mut, fontSize: 14 }}>Sin cuerdas por encima del umbral de antigüedad ({LIM_MESES.colectora} meses en colectora, {LIM_MESES.desdoble} en mexilla).</p>
+                  <p style={{ color: C.mut, fontSize: 14 }}>Sin cuerdas por encima del umbral de antigüedad ({limMeses.colectora} meses en colectora, {limMeses.desdoble} en mexilla, {limMeses.venta} en venta).</p>
                 ) : (
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
