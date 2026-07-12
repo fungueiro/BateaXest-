@@ -295,6 +295,25 @@ const Cargando = ({ texto }) => (
   <Pantalla><p style={{ color: C.mut, fontSize: 14, margin: 0 }}>{texto || "Cargando…"}</p></Pantalla>
 );
 
+// Red de seguridad: si algo peta durante el render, mostramos un mensaje en vez de pantalla en blanco.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <Pantalla>
+        <h1 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 8px", color: C.warn }}>Se ha producido un error</h1>
+        <p style={{ color: C.text, fontSize: 14, margin: "0 0 8px" }}>
+          Tus datos están a salvo en la nube (se guardó el último cambio correcto). Recarga la página para continuar.
+        </p>
+        <p style={{ color: C.mut, fontSize: 12, margin: "0 0 14px", fontFamily: "monospace", wordBreak: "break-word" }}>{String(this.state.err && this.state.err.message || this.state.err)}</p>
+        <button style={btn(true)} onClick={() => location.reload()}>Recargar</button>
+      </Pantalla>
+    );
+  }
+}
+
 function Login({ onReconfig }) {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -343,7 +362,7 @@ function Root() {
   if (reconfig || !cfg) return <ConfigSetup onSaved={(c) => { setReconfig(false); setCfg(c); }} onCancel={cfg ? () => setReconfig(false) : null} />;
   if (user === undefined) return <Cargando texto="Comprobando sesión…" />;
   if (!user) return <Login onReconfig={() => setReconfig(true)} />;
-  return <GestionBatea db={firebase.firestore()} />;
+  return <ErrorBoundary><GestionBatea db={firebase.firestore()} /></ErrorBoundary>;
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────
@@ -506,6 +525,19 @@ function GestionBatea({ db }) {
     cat: "colectora", catDest: "desdoble", n: "", nDest: "", nota: "", dir: "quitar",
     vmodo: "sacos", vsacos: "", vkg: "", vdesct: "", veur: "", vpersona: "", vcomprador: "",
   });
+  // El desplegable de batea guarda un id fijo (1/2 por defecto). Si esas bateas no existen
+  // (datos propios cargados de la nube), el id queda "colgado" y provoca errores al operar.
+  // Este efecto reengancha bateaId/bateaDestId a bateas reales cuando cambia la lista.
+  useEffect(() => {
+    if (!bateas.length) return;
+    const ids = bateas.map((b) => b.id);
+    setOp((o) => {
+      let n = o;
+      if (!ids.includes(+o.bateaId)) n = { ...n, bateaId: bateas[0].id };
+      if (!ids.includes(+n.bateaDestId)) n = { ...n, bateaDestId: (bateas[1] || bateas[0]).id };
+      return n;
+    });
+  }, [bateas]);
 
   // ── Colocación (tras Registrar lote) ──
   // pend: { op, fases:[{modo:'quitar'|'poner', bateaId, cat, n}], fase, sel:Set, origen:{} }
@@ -549,6 +581,8 @@ function GestionBatea({ db }) {
     const n = parseInt(op.n), nD = parseInt(op.nDest || op.n);
     if (!n || n <= 0) return flash("Cantidad inválida.");
     if (!op.fecha || op.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
+    if (!bx(op.bateaId)) return flash("Selecciona una batea de origen válida.");
+    if (["movimiento", "desdoble"].includes(op.tipo) && !bx(op.bateaDestId)) return flash("Selecciona una batea de destino válida.");
     const o = { ...op, id: Date.now(), n, nDest: nD, bateaId: +op.bateaId, bateaDestId: +op.bateaDestId };
     let fases;
     if (o.tipo === "venta") {
