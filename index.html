@@ -58,6 +58,17 @@ const exceso = (b) => {
 };
 const capLog = () => LIM_PROD + LIM_COL; // tope lógico de cuerdas por batea (500 + 100)
 const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, extra: { ...b.extra } }));
+const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
+// Alertas de manejo por antigüedad (ajustables): meses sin desdoblar / sin vender
+const LIM_MESES = { colectora: 8, desdoble: 12 };
+const MAX_UNDO = 20;
+// Catálogo de personas/compradores: solo sugiere (datalist), no bloquea texto libre
+const addCatalogo = (setLista, valor) => {
+  const v = (valor || "").trim();
+  if (!v) return;
+  setLista((xs) => (xs.some((x) => x.toLowerCase() === v.toLowerCase()) ? xs : [...xs, v]));
+};
+const delCatalogo = (setLista, valor) => setLista((xs) => xs.filter((x) => x !== valor));
 
 function seed(id, nombre, fill) {
   const b = nuevaBatea(id, nombre, 20, 25);
@@ -90,6 +101,30 @@ const Warn = ({ children }) => (
     <span style={{ fontWeight: 700 }}>⚠</span>{children}
   </span>
 );
+const CatalogoField = ({ label, items, onAdd, onDel }) => {
+  const [val, setVal] = useState("");
+  const add = () => { onAdd(val); setVal(""); };
+  return (
+    <div style={{ flex: 1, minWidth: 220 }}>
+      <label style={lbl}>{label}</label>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {items.map((x) => (
+          <span key={x} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, borderRadius: 20, padding: "3px 6px 3px 12px", fontSize: 12 }}>
+            {x}
+            <button onClick={() => onDel(x)} style={{ background: "transparent", border: "none", color: C.mut, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+          </span>
+        ))}
+        {items.length === 0 && <span style={{ color: C.mut, fontSize: 12 }}>Sin datos aún</span>}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input style={{ ...inp, maxWidth: 200 }} placeholder="Añadir…" value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
+        <button style={mini()} onClick={add}>Añadir</button>
+      </div>
+    </div>
+  );
+};
 
 const BarChart = ({ data, valueKey, color }) => {
   const max = Math.max(1, ...data.map((d) => d[valueKey]));
@@ -201,6 +236,9 @@ function GestionBatea() {
   const flash = (m) => { setAviso(m); setTimeout(() => setAviso(""), 4500); };
   const bx = (id) => bateas.find((b) => b.id === +id);
   const bn = (id) => bx(id)?.nombre || "—";
+  const [personas, setPersonas] = useState(["Román"]);
+  const [compradores, setCompradores] = useState(["Udana"]);
+  const [catAbierto, setCatAbierto] = useState(false);
   const loteInfo = (b) => (k, cat) => {
     const op = ops.find((x) => x.id === b.lotes?.[k]);
     if (!op) return `${CAT[cat].label} · lote inicial`;
@@ -212,6 +250,7 @@ function GestionBatea() {
   const saveEdit = () => {
     const a = parseInt(edit.ancho), l = parseInt(edit.largo);
     if (!edit.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    pushHistorial(`Editar batea "${edit.nombre}"`);
     setBateas(bateas.map((b) => {
       if (b.id !== edit.id) return b;
       const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {}, extra: { ...b.extra } };
@@ -228,12 +267,13 @@ function GestionBatea() {
       if (fuera || flotFuera) flash(`${nb.nombre}: ${fuera ? fuera + " cuerdas sin ubicar" : ""}${fuera && flotFuera ? " · " : ""}${flotFuera ? flotFuera + " flotadores fuera del nuevo tamaño (eliminados)" : ""}.`);
       return nb;
     }));
-    setEdit(null); setUltimaOp(null);
+    setEdit(null);
   };
   const [delBatea, setDelBatea] = useState(null); // id pendiente de confirmar
   const borrarBatea = (id) => {
+    pushHistorial(`Eliminar batea "${bn(id)}"`);
     setBateas(bateas.filter((b) => b.id !== id));
-    setEdit(null); setDelBatea(null); setUltimaOp(null);
+    setEdit(null); setDelBatea(null);
     flash("Batea eliminada. Su inventario de cuerdas se pierde; operaciones y ventas históricas se conservan.");
   };
 
@@ -250,7 +290,7 @@ function GestionBatea() {
     if (reub.cat) { // modo ubicar extra
       if (!b.celdas[k] && b.extra[reub.cat] > 0) {
         b.celdas[k] = reub.cat; b.extra[reub.cat]--;
-        setBateas(bs); setUltimaOp(null);
+        setBateas(bs);
         if (b.extra[reub.cat] === 0) setReub({ ...reub, cat: null });
       }
       return;
@@ -266,7 +306,7 @@ function GestionBatea() {
       b.celdas[k] = b.celdas[from]; delete b.celdas[from];
       if (b.lotes?.[from] != null) { b.lotes[k] = b.lotes[from]; delete b.lotes[from]; }
       const sel = new Set(reub.sel); sel.delete(from);
-      setBateas(bs); setUltimaOp(null); setReub({ ...reub, sel });
+      setBateas(bs); setReub({ ...reub, sel });
     }
   };
   const flotCell = (k, modo) => setFlot((f) => {
@@ -275,9 +315,10 @@ function GestionBatea() {
     return { ...f, sel: s };
   });
   const saveFlot = () => {
+    pushHistorial(`Flotadores — ${bn(flot.bateaId)}`);
     setBateas(bateas.map((b) => b.id === flot.bateaId
       ? { ...b, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])) } : b));
-    setFlot(null); setUltimaOp(null);
+    setFlot(null);
   };
 
   // ── Alta de batea ──
@@ -285,6 +326,7 @@ function GestionBatea() {
   const addBatea = () => {
     const a = parseInt(nb.ancho), l = parseInt(nb.largo);
     if (!nb.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    pushHistorial(`Añadir batea "${nb.nombre}"`);
     const b = nuevaBatea(Date.now(), nb.nombre, a, l);
     setBateas([...bateas, b]);
     setNb({ nombre: "", ancho: "", largo: "" });
@@ -299,40 +341,42 @@ function GestionBatea() {
   });
 
   // ── Colocación (tras Registrar lote) ──
-  // pend: { op, fases:[{modo:'quitar'|'poner', bateaId, cat, n}], fase, sel:Set }
+  // pend: { op, fases:[{modo:'quitar'|'poner', bateaId, cat, n}], fase, sel:Set, origen:{} }
   const [pend, setPend] = useState(null);
+  // ── Ficha de trazabilidad de lote (opId abierto) ──
+  const [verLote, setVerLote] = useState(null);
 
-  // ── Deshacer última operación (un nivel; se invalida si el plano cambia por otra vía) ──
-  const [ultimaOp, setUltimaOp] = useState(null); // {snap, opId, ventaId}
-  const deshacer = () => {
-    if (!ultimaOp) return;
-    setBateas(ultimaOp.snap);
-    setOps((os) => os.filter((o) => o.id !== ultimaOp.opId));
-    if (ultimaOp.ventaId) setVentas((vs) => vs.filter((x) => x.id !== ultimaOp.ventaId));
-    setUltimaOp(null);
-    flash("Última operación deshecha: plano, historial y venta vinculada restaurados.");
+  // ── Deshacer: pila multi-nivel de acciones (plano, operaciones y ventas) ──
+  const [historial, setHistorial] = useState([]); // [{label, bateas, ops, ventas}]
+  const pushHistorial = (label) => setHistorial((h) => [...h.slice(-(MAX_UNDO - 1)), { label, bateas: clon(bateas), ops, ventas }]);
+  const deshacerUltimo = () => {
+    setHistorial((h) => {
+      if (!h.length) return h;
+      const last = h[h.length - 1];
+      setBateas(last.bateas); setOps(last.ops); setVentas(last.ventas);
+      flash(`Deshecho: ${last.label}.`);
+      return h.slice(0, -1);
+    });
   };
 
   // ── Edición / borrado de registros de operación ──
   const [delOp, setDelOp] = useState(null);
   const [editOp, setEditOp] = useState(null); // {id, fecha, nota} — no toca el plano
-  const [undoOp, setUndoOp] = useState(null); // snapshot {ops, ventas} previo a editar/borrar
   const borrarOp = (id) => {
+    const op0 = ops.find((x) => x.id === id);
     const vLig = ventas.find((x) => x.opId === id);
-    setUndoOp({ ops, ventas });
+    pushHistorial(`Eliminar operación (${TIPO_LABEL[op0?.tipo] || "?"})`);
     setOps(ops.filter((o) => o.id !== id));
     if (vLig) setVentas(ventas.filter((x) => x.opId !== id));
-    if (ultimaOp?.opId === id) setUltimaOp(null);
     setDelOp(null);
-    flash(`Registro eliminado${vLig ? " (y su venta vinculada)" : ""}. El plano NO se modifica; para revertir una operación recién confirmada usa Deshacer.`);
+    flash(`Registro eliminado${vLig ? " (y su venta vinculada)" : ""}. El plano NO se modifica; usa Deshacer si quieres recuperarlo.`);
   };
   const saveEditOp = () => {
     if (!editOp.fecha || editOp.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
-    setUndoOp({ ops, ventas });
+    pushHistorial("Editar operación");
     setOps(ops.map((o) => o.id === editOp.id ? { ...o, fecha: editOp.fecha, nota: editOp.nota } : o));
     setEditOp(null);
   };
-  const deshacerOp = () => { if (!undoOp) return; setOps(undoOp.ops); setVentas(undoOp.ventas); setUndoOp(null); flash("Edición/borrado deshecho."); };
 
   const registrarLote = () => {
     const n = parseInt(op.n), nD = parseInt(op.nDest || op.n);
@@ -361,7 +405,7 @@ function GestionBatea() {
     // Quitar más de lo que existe: imposible físicamente → se bloquea (no es sobrecapacidad).
     for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < f.n)
       return flash(`${bn(f.bateaId)}: solo hay ${stock(bx(f.bateaId), f.cat)} ${CAT[f.cat].label}.`);
-    setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas) });
+    setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas), origen: {} });
   };
 
   const faseActual = pend && pend.fases[pend.fase];
@@ -377,6 +421,23 @@ function GestionBatea() {
   const fechaCelda = (b, k) => {
     const o = ops.find((x) => x.id === b.lotes?.[k]);
     return o?.fecha || "0000-00-00";
+  };
+  // Alertas de manejo: cuerdas que llevan más tiempo del razonable en colectora/mexilla sin mover.
+  const alertasEdad = (b) => {
+    const res = [];
+    for (const cat of ["colectora", "desdoble"]) {
+      const lim = LIM_MESES[cat];
+      let vencidas = 0, sinFecha = 0, antigua = null;
+      for (const [k, c] of Object.entries(b.celdas)) {
+        if (c !== cat) continue;
+        const fecha = fechaCelda(b, k);
+        if (fecha === "0000-00-00") { sinFecha++; continue; }
+        const meses = (new Date(hoy()) - new Date(fecha)) / (1000 * 60 * 60 * 24 * 30.44);
+        if (meses >= lim) { vencidas++; if (!antigua || fecha < antigua) antigua = fecha; }
+      }
+      if (vencidas || sinFecha) res.push({ cat, vencidas, sinFecha, antigua, lim });
+    }
+    return res;
   };
   // Preselecciona hasta n celdas para una fase; al retirar, las más antiguas por fecha primero.
   const preSel = (fase, base) => {
@@ -407,6 +468,7 @@ function GestionBatea() {
     const f = faseActual, resto = f.n - pend.sel.size;
     const bs = clon(bateas);
     const b = bs.find((x) => x.id === f.bateaId);
+    let origen = pend.origen || {};
     if (f.modo === "poner") {
       pend.sel.forEach((k) => { b.celdas[k] = f.cat; b.lotes[k] = pend.op.id; });
       if (resto > 0) { // sobrecapacidad o sin ubicar: se registra igual + aviso
@@ -414,17 +476,26 @@ function GestionBatea() {
         flash(`${b.nombre}: ${resto} cuerdas sin celda libre → registradas sin ubicar (posible sobrecapacidad).`);
       }
     } else {
-      pend.sel.forEach((k) => { delete b.celdas[k]; delete b.lotes[k]; });
+      // Traza de qué lote(s) salen las cuerdas retiradas, para la ficha de trazabilidad
+      const origenFase = {};
+      pend.sel.forEach((k) => {
+        const loteId = b.lotes[k] ?? "init";
+        origenFase[loteId] = (origenFase[loteId] || 0) + 1;
+        delete b.celdas[k]; delete b.lotes[k];
+      });
       if (resto > 0) {
         const deExtra = Math.min(resto, b.extra[f.cat]);
         b.extra[f.cat] -= deExtra;
         if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} celdas más de ${CAT[f.cat].label}.`);
+        if (deExtra > 0) origenFase.extra = (origenFase.extra || 0) + deExtra;
       }
+      origen = { ...origen };
+      for (const [lid, n] of Object.entries(origenFase)) origen[lid] = (origen[lid] || 0) + n;
     }
     setBateas(bs);
-    if (pend.fase + 1 < pend.fases.length) setPend({ ...pend, fase: pend.fase + 1, sel: selInicial(pend.fases[pend.fase + 1]) });
+    if (pend.fase + 1 < pend.fases.length) setPend({ ...pend, fase: pend.fase + 1, sel: selInicial(pend.fases[pend.fase + 1]), origen });
     else {
-      const o = pend.op;
+      const o = { ...pend.op, origenLotes: origen };
       let ventaId = null;
       if (o.tipo === "venta") {
         ventaId = Date.now() + 1;
@@ -433,9 +504,11 @@ function GestionBatea() {
           desct: o.vdesct, eurkg: o.veur, persona: o.vpersona, comprador: o.vcomprador,
           estado: "pendiente", base: o.base, total: totalVenta(o.base),
         }, ...vs]);
+        addCatalogo(setPersonas, o.vpersona);
+        addCatalogo(setCompradores, o.vcomprador);
       }
+      setHistorial((h) => [...h.slice(-(MAX_UNDO - 1)), { label: `${TIPO_LABEL[o.tipo]} — ${bn(o.bateaId)}`, bateas: pend.snap, ops, ventas }]);
       setOps([o, ...ops]);
-      setUltimaOp({ snap: pend.snap, opId: o.id, ventaId });
       setPend(null);
       setOp({ ...op, n: "", nDest: "", nota: "", vsacos: "", vkg: "", vdesct: "", veur: "" });
       // Aviso de límite lógico superado en las bateas tocadas por la operación
@@ -448,7 +521,6 @@ function GestionBatea() {
   // ── Ventas (se crean desde Operaciones → Venta/cosecha) ──
   const [editV, setEditV] = useState(null); // copia editable de la fila
   const [delV, setDelV] = useState(null);
-  const [undoVenta, setUndoVenta] = useState(null); // snapshot ventas previo a editar/borrar
   const saveEditV = () => {
     if (!editV.fecha || editV.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
     const x0 = ventas.find((x) => x.id === editV.id);
@@ -457,16 +529,17 @@ function GestionBatea() {
       ? (parseFloat(editV.sacos) || 0) * 10 * e
       : (parseFloat(editV.kgBrutos) || 0) * (1 - (parseFloat(editV.desct) || 0) / 100) * e;
     if (base <= 0) return flash("Faltan datos de la venta (cantidad y €/kg).");
-    setUndoVenta(ventas);
+    pushHistorial("Editar venta");
     setVentas(ventas.map((x) => x.id === editV.id
       ? { ...x, fecha: editV.fecha, sacos: editV.sacos, kgBrutos: editV.kgBrutos, desct: editV.desct, eurkg: editV.eurkg, persona: editV.persona, comprador: editV.comprador, base, total: totalVenta(base) }
       : x));
+    addCatalogo(setPersonas, editV.persona);
+    addCatalogo(setCompradores, editV.comprador);
     setEditV(null);
     flash("Venta actualizada.");
   };
-  const borrarVenta = (id) => { setUndoVenta(ventas); setVentas(ventas.filter((x) => x.id !== id)); setDelV(null); };
-  const deshacerVenta = () => { if (!undoVenta) return; setVentas(undoVenta); setUndoVenta(null); flash("Edición/borrado deshecho."); };
-  const toggleCobro = (id) => setVentas(ventas.map((x) => x.id === id ? { ...x, estado: x.estado === "cobrado" ? "pendiente" : "cobrado", fechaCobro: x.estado === "cobrado" ? null : hoy() } : x));
+  const borrarVenta = (id) => { pushHistorial("Eliminar venta"); setVentas(ventas.filter((x) => x.id !== id)); setDelV(null); };
+  const toggleCobro = (id) => { pushHistorial("Cambiar estado de cobro"); setVentas(ventas.map((x) => x.id === id ? { ...x, estado: x.estado === "cobrado" ? "pendiente" : "cobrado", fechaCobro: x.estado === "cobrado" ? null : hoy() } : x)); };
   // ── Filtros ──
   const [fo, setFo] = useState({ desde: "", hasta: "", tipo: "", bateaId: "" });
   const opsF = ops.filter((o) =>
@@ -534,9 +607,18 @@ function GestionBatea() {
         </nav>
       </header>
 
+      {historial.length > 0 && (
+        <div style={{ margin: "12px 24px 0", display: "flex", justifyContent: "flex-end" }}>
+          <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={deshacerUltimo}>
+            ↶ Deshacer «{historial[historial.length - 1].label}» ({historial.length})
+          </button>
+        </div>
+      )}
       {aviso && (
         <div style={{ margin: "12px 24px 0", padding: "10px 14px", background: "#3A2323", border: `1px solid ${C.warn}`, borderRadius: 6, fontSize: 13, color: "#F2C9BE" }}>{aviso}</div>
       )}
+      <datalist id="dl-personas">{personas.map((p) => <option key={p} value={p} />)}</datalist>
+      <datalist id="dl-compradores">{compradores.map((c) => <option key={c} value={c} />)}</datalist>
 
       <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
 
@@ -617,6 +699,7 @@ function GestionBatea() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(460px,1fr))", gap: 16 }}>
               {bateas.map((b) => {
                 const oc = ocup(b), ext = extraTot(b), exc = exceso(b), sobre = exc.length > 0;
+                const alEdad = alertasEdad(b);
                 const enEdicion = edit?.id === b.id;
                 return (
                   <div key={b.id} style={{ background: C.panel, border: `1px solid ${sobre ? C.warn : C.line}`, borderRadius: 10, padding: 18 }}>
@@ -646,7 +729,7 @@ function GestionBatea() {
                           {fmtN(oc)} / {fmtN(cap(b))} · {b.ancho}×{b.largo}
                           <button onClick={() => setEdit({ id: b.id, nombre: b.nombre, ancho: b.ancho, largo: b.largo })}
                             style={{ ...btn(false), padding: "2px 9px", marginLeft: 8, fontSize: 12 }}>Editar</button>
-                          <button onClick={() => setReub({ bateaId: b.id, sel: new Set(), cat: null })}
+                          <button onClick={() => { pushHistorial(`Recolocar — ${b.nombre}`); setReub({ bateaId: b.id, sel: new Set(), cat: null }); }}
                             style={{ ...btn(false), padding: "2px 9px", marginLeft: 6, fontSize: 12 }}>Recolocar</button>
                         </span>
                       </div>
@@ -657,12 +740,15 @@ function GestionBatea() {
                         <span key={c}><b style={{ color: CAT[c].color }}>{fmtN(stock(b, c))}</b> <span style={{ color: C.mut }}>{c === "desdoble" ? "mexilla" : c}</span></span>
                       ))}
                     </div>
-                    {(sobre || ext > 0) && (
+                    {(sobre || ext > 0 || alEdad.length > 0) && (
                       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
                         {exc.map((e) => (
                           <Warn key={e.tipo}>Límite superado en {e.tipo}: {fmtN(e.actual)} cuerdas (máx. {fmtN(e.lim)}) → {fmtN(e.n)} por encima.</Warn>
                         ))}
                         {ext > 0 && <Warn>{fmtN(ext)} cuerdas sin ubicar en el plano.</Warn>}
+                        {alEdad.map((a) => (
+                          <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${a.antigua})` : ""} — revisar {a.cat === "colectora" ? "desdoble" : "venta"}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -684,6 +770,63 @@ function GestionBatea() {
         {/* ── OPERACIONES ── */}
         {tab === "ops" && !pend && (
           <>
+            {verLote && (() => {
+              const opL = ops.find((x) => x.id === verLote);
+              if (!opL) return null;
+              const labelLote = (lid) => {
+                if (lid === "init") return "cuerdas iniciales (sin lote registrado)";
+                if (lid === "extra") return "cuerdas que ya estaban sin ubicar";
+                const o2 = ops.find((x) => x.id === +lid);
+                return o2 ? `${TIPO_LABEL[o2.tipo]} · ${o2.fecha} · ${bn(o2.bateaId)}` : `lote #${lid}`;
+              };
+              const origen = Object.entries(opL.origenLotes || {});
+              const destino = ops.filter((x) => x.origenLotes && x.origenLotes[opL.id]).map((x) => ({ op: x, n: x.origenLotes[opL.id] }));
+              const enPlano = bateas.map((b) => {
+                let n = 0, cat = null;
+                for (const [k, c] of Object.entries(b.celdas)) if (b.lotes?.[k] === opL.id) { n++; cat = c; }
+                return { b, n, cat };
+              }).filter((r) => r.n > 0);
+              const venta = ventas.find((v) => v.opId === opL.id);
+              return (
+                <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                      Ficha de lote — {TIPO_LABEL[opL.tipo]} · {opL.fecha} · {bn(opL.bateaId)}
+                    </h2>
+                    <button style={mini()} onClick={() => setVerLote(null)}>Cerrar</button>
+                  </div>
+                  <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>{fmtN(opL.n)} cuerdas{opL.nota ? ` · ${opL.nota}` : ""}</p>
+                  <h3 style={{ ...h3, margin: "14px 0 6px" }}>Origen</h3>
+                  {origen.length ? (
+                    <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 13 }}>
+                      {origen.map(([lid, n]) => <li key={lid}>{fmtN(n)} cuerdas de {labelLote(lid)}</li>)}
+                    </ul>
+                  ) : <p style={{ fontSize: 13, color: C.mut }}>Cuerdas nuevas, sin lote de origen registrado.</p>}
+                  <h3 style={{ ...h3, margin: "14px 0 6px" }}>Usado en</h3>
+                  {destino.length ? (
+                    <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 13 }}>
+                      {destino.map(({ op: x, n }) => (
+                        <li key={x.id}>{fmtN(n)} cuerdas → {TIPO_LABEL[x.tipo]} · {x.fecha} · {bn(x.bateaId)}{" "}
+                          <button style={mini()} onClick={() => setVerLote(x.id)}>ver</button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p style={{ fontSize: 13, color: C.mut }}>Todavía no se ha usado en ninguna operación posterior.</p>}
+                  <h3 style={{ ...h3, margin: "14px 0 6px" }}>Actualmente en el plano</h3>
+                  {enPlano.length ? (
+                    <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 13 }}>
+                      {enPlano.map(({ b, n, cat }) => <li key={b.id}>{fmtN(n)} cuerdas en {b.nombre} ({CAT[cat].label})</li>)}
+                    </ul>
+                  ) : <p style={{ fontSize: 13, color: C.mut }}>Ninguna cuerda de este lote sigue en el plano.</p>}
+                  {venta && (
+                    <>
+                      <h3 style={{ ...h3, margin: "14px 0 6px" }}>Venta asociada</h3>
+                      <p style={{ fontSize: 13 }}>{fmtEUR(venta.total)} · {venta.estado}{venta.comprador ? ` · ${venta.comprador}` : ""}</p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 18 }}>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <Field label="Tipo">
@@ -755,16 +898,14 @@ function GestionBatea() {
                       </>
                     )}
                     <Field label="€ / kg"><input style={inp} type="number" step="0.001" placeholder="0,76" value={op.veur} onChange={(e) => setOp({ ...op, veur: e.target.value })} /></Field>
-                    <Field label="Persona"><input style={inp} placeholder="Román" value={op.vpersona} onChange={(e) => setOp({ ...op, vpersona: e.target.value })} /></Field>
-                    <Field label="Comprador"><input style={inp} placeholder="Udana" value={op.vcomprador} onChange={(e) => setOp({ ...op, vcomprador: e.target.value })} /></Field>
+                    <Field label="Persona"><input style={inp} list="dl-personas" placeholder="Román" value={op.vpersona} onChange={(e) => setOp({ ...op, vpersona: e.target.value })} /></Field>
+                    <Field label="Comprador"><input style={inp} list="dl-compradores" placeholder="Udana" value={op.vcomprador} onChange={(e) => setOp({ ...op, vcomprador: e.target.value })} /></Field>
                   </>
                 )}
                 <Field label="Nota"><input style={inp} placeholder="Opcional" value={op.nota} onChange={(e) => setOp({ ...op, nota: e.target.value })} /></Field>
               </div>
               <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={registrarLote}>Registrar lote</button>
-                {ultimaOp && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn, marginLeft: 10 }} onClick={deshacer}>Deshacer última operación</button>}
-                {undoOp && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={deshacerOp}>Deshacer última edición/borrado</button>}
                 {op.tipo === "venta" && (() => {
                   const e = parseFloat(op.veur) || 0;
                   const base = op.vmodo === "sacos" ? (parseFloat(op.vsacos) || 0) * 10 * e
@@ -840,6 +981,7 @@ function GestionBatea() {
                             </>
                           ) : (
                             <>
+                              <button style={mini()} onClick={() => setVerLote(o.id)}>👁</button>{" "}
                               <button style={mini()} onClick={() => setEditOp({ id: o.id, fecha: o.fecha, nota: o.nota || "" })}>✎</button>{" "}
                               <button style={mini(C.warn)} onClick={() => setDelOp(o.id)}>🗑</button>
                             </>
@@ -902,6 +1044,15 @@ function GestionBatea() {
             <p style={{ color: C.mut, fontSize: 13, margin: "0 0 4px" }}>
               Las ventas se anotan automáticamente al registrar una operación de <b>Venta / cosecha</b> en Operaciones.
             </p>
+            <button style={{ ...mini(), margin: "6px 0" }} onClick={() => setCatAbierto((v) => !v)}>
+              {catAbierto ? "Ocultar" : "Gestionar"} catálogo de personas / compradores
+            </button>
+            {catAbierto && (
+              <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, margin: "10px 0", display: "flex", gap: 24, flexWrap: "wrap" }}>
+                <CatalogoField label="Personas" items={personas} onAdd={(v) => addCatalogo(setPersonas, v)} onDel={(v) => delCatalogo(setPersonas, v)} />
+                <CatalogoField label="Compradores" items={compradores} onAdd={(v) => addCatalogo(setCompradores, v)} onDel={(v) => delCatalogo(setCompradores, v)} />
+              </div>
+            )}
 
             <h3 style={h3}>Registro</h3>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -927,7 +1078,6 @@ function GestionBatea() {
                   ventasF.map((x) => [x.fecha, x.modo, x.sacos || "", x.kgBrutos || "", x.desct || "", x.eurkg, x.total.toFixed(2), x.persona, x.comprador, x.estado, x.fechaCobro || ""]))}>
                   Exportar CSV
                 </button>
-                {undoVenta && <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={deshacerVenta}>Deshacer última edición/borrado</button>}
               </div>
             </div>
             {ventasF.length === 0 ? (
@@ -965,10 +1115,10 @@ function GestionBatea() {
                       </td>
                       <td style={{ padding: "7px 8px", fontWeight: 600 }}>{fmtEUR(x.total)}</td>
                       <td style={{ padding: "7px 8px" }}>
-                        {ed ? <input style={{ ...cIn, width: 90 }} value={editV.persona} onChange={(e) => setEditV({ ...editV, persona: e.target.value })} /> : x.persona}
+                        {ed ? <input style={{ ...cIn, width: 90 }} list="dl-personas" value={editV.persona} onChange={(e) => setEditV({ ...editV, persona: e.target.value })} /> : x.persona}
                       </td>
                       <td style={{ padding: "7px 8px" }}>
-                        {ed ? <input style={{ ...cIn, width: 90 }} value={editV.comprador} onChange={(e) => setEditV({ ...editV, comprador: e.target.value })} /> : x.comprador}
+                        {ed ? <input style={{ ...cIn, width: 90 }} list="dl-compradores" value={editV.comprador} onChange={(e) => setEditV({ ...editV, comprador: e.target.value })} /> : x.comprador}
                       </td>
                       <td style={{ padding: "7px 8px" }}>
                         <button onClick={() => toggleCobro(x.id)} style={{
@@ -992,6 +1142,7 @@ function GestionBatea() {
                           </>
                         ) : (
                           <>
+                            <button style={mini()} onClick={() => { setTab("ops"); setVerLote(x.opId); }}>👁</button>{" "}
                             <button style={mini()} onClick={() => setEditV({ id: x.id, fecha: x.fecha, sacos: x.sacos || "", kgBrutos: x.kgBrutos || "", desct: x.desct || "", eurkg: x.eurkg || "", persona: x.persona || "", comprador: x.comprador || "" })}>✎</button>{" "}
                             <button style={mini(C.warn)} onClick={() => setDelV(x.id)}>🗑</button>
                           </>
@@ -1064,6 +1215,33 @@ function GestionBatea() {
                   ))}
                 </tbody>
               </table>
+              <h3 style={h3}>Alertas de manejo (antigüedad)</h3>
+              {(() => {
+                const filas = bateas.flatMap((b) => alertasEdad(b).map((a) => ({ b, ...a })));
+                return filas.length === 0 ? (
+                  <p style={{ color: C.mut, fontSize: 14 }}>Sin cuerdas por encima del umbral de antigüedad ({LIM_MESES.colectora} meses en colectora, {LIM_MESES.desdoble} en mexilla).</p>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: C.mut, textAlign: "left" }}>
+                        {["Batea", "Tipo", "Cuerdas afectadas", "Más antigua desde", "Umbral", "Sin fecha conocida"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filas.map((f, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${C.line}` }}>
+                          <td style={{ padding: "7px 8px" }}>{f.b.nombre}</td>
+                          <td style={{ padding: "7px 8px", color: CAT[f.cat].color }}>{CAT[f.cat].label}</td>
+                          <td style={{ padding: "7px 8px", color: C.warn }}>{fmtN(f.vencidas)}</td>
+                          <td style={{ padding: "7px 8px" }}>{f.antigua || "—"}</td>
+                          <td style={{ padding: "7px 8px", color: C.mut }}>{f.lim} meses</td>
+                          <td style={{ padding: "7px 8px", color: C.mut }}>{f.sinFecha ? fmtN(f.sinFecha) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </>
           );
         })()}
