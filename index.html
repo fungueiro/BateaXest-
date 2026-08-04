@@ -441,6 +441,16 @@ function GestionBatea({ db }) {
 
   // ── Edición de batea ──
   const [edit, setEdit] = useState(null); // {id, nombre, ancho, largo}
+  // Refs a la tarjeta de cada batea para poder llevar la pantalla al formulario de edición.
+  const cardRefs = useRef({});
+  // Al pulsar "Editar" el formulario sustituye a la cabecera de la tarjeta, que puede quedar
+  // fuera de pantalla si la lista está desplazada. Subimos hasta ella para que se vea.
+  const abrirEdit = (b) => {
+    setDelBatea(null);
+    setEdit({ id: b.id, nombre: b.nombre, ancho: b.ancho, largo: b.largo });
+    requestAnimationFrame(() => cardRefs.current[b.id]?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const cerrarEdit = () => { setEdit(null); setDelBatea(null); };
   const saveEdit = () => {
     const a = parseInt(edit.ancho), l = parseInt(edit.largo);
     if (!edit.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
@@ -461,7 +471,7 @@ function GestionBatea({ db }) {
       if (fuera || flotFuera) flash(`${nb.nombre}: ${fuera ? fuera + " cuerdas sin ubicar" : ""}${fuera && flotFuera ? " · " : ""}${flotFuera ? flotFuera + " flotadores fuera del nuevo tamaño (eliminados)" : ""}.`);
       return nb;
     }));
-    setEdit(null);
+    cerrarEdit();
   };
   const [delBatea, setDelBatea] = useState(null); // id pendiente de confirmar
   const borrarBatea = (id) => {
@@ -916,37 +926,50 @@ function GestionBatea({ db }) {
                 const alEdad = alertasEdad(b);
                 const enEdicion = edit?.id === b.id;
                 return (
-                  <div key={b.id} style={{ background: C.panel, border: `1px solid ${sobre ? C.warn : C.line}`, borderRadius: 10, padding: 18 }}>
+                  <div key={b.id} ref={(el) => { cardRefs.current[b.id] = el; }}
+                    style={{ background: C.panel, border: `1px solid ${enEdicion ? C.rope : sobre ? C.warn : C.line}`, borderRadius: 10, padding: 18, scrollMarginTop: 12 }}>
                     {enEdicion ? (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                        <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
-                        <Field label="Ancho" w={70}><input style={inp} type="number" value={edit.ancho} onChange={(e) => setEdit({ ...edit, ancho: e.target.value })} /></Field>
-                        <Field label="Largo" w={70}><input style={inp} type="number" value={edit.largo} onChange={(e) => setEdit({ ...edit, largo: e.target.value })} /></Field>
-                        <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                          <button style={btn(true)} onClick={saveEdit}>Guardar</button>
-                          <button style={btn(false)} onClick={() => { setEdit(null); abrirFlot(b); }}>Flotadores</button>
-                          {delBatea === b.id ? (
-                            <>
-                              <button style={{ ...btn(true), background: C.warn, borderColor: C.warn }} onClick={() => borrarBatea(b.id)}>¿Seguro? Sí, borrar</button>
-                              <button style={btn(false)} onClick={() => setDelBatea(null)}>No</button>
-                            </>
-                          ) : (
-                            <button style={{ ...btn(false), borderColor: C.warn, color: C.warn }} onClick={() => setDelBatea(b.id)}>Borrar</button>
-                          )}
-                          <button style={btn(false)} onClick={() => setEdit(null)}>Cancelar</button>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: C.rope, marginBottom: 8 }}>
+                          Editando {b.nombre}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
+                          <Field label="Ancho" w={70}><input style={inp} type="number" value={edit.ancho} onChange={(e) => setEdit({ ...edit, ancho: e.target.value })} /></Field>
+                          <Field label="Largo" w={70}><input style={inp} type="number" value={edit.largo} onChange={(e) => setEdit({ ...edit, largo: e.target.value })} /></Field>
+                          <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                            <button style={btn(true)} onClick={saveEdit}>Guardar</button>
+                            <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Flotadores</button>
+                            <button style={btn(false)} onClick={cerrarEdit}>Cancelar</button>
+                          </div>
                         </div>
                       </div>
                     ) : (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                        <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", margin: 0 }}>{b.nombre}</h2>
-                        <span style={{ fontSize: 13, color: sobre ? C.warn : C.mut, whiteSpace: "nowrap" }}>
-                          {fmtN(oc)} / {fmtN(cap(b))} · {b.ancho}×{b.largo}
-                          <button onClick={() => setEdit({ id: b.id, nombre: b.nombre, ancho: b.ancho, largo: b.largo })}
-                            style={{ ...btn(false), padding: "2px 9px", marginLeft: 8, fontSize: 12 }}>Editar</button>
-                          <button onClick={() => { pushHistorial(`Recolocar — ${b.nombre}`); setReub({ bateaId: b.id, sel: new Set(), cat: null }); }}
-                            style={{ ...btn(false), padding: "2px 9px", marginLeft: 6, fontSize: 12 }}>Recolocar</button>
-                        </span>
-                      </div>
+                      <>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                          <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", margin: 0 }}>{b.nombre}</h2>
+                          <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, color: sobre ? C.warn : C.mut }}>
+                            <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.ancho}×{b.largo}</span>
+                            <button onClick={() => abrirEdit(b)}
+                              style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Editar</button>
+                            <button onClick={() => { pushHistorial(`Recolocar — ${b.nombre}`); setReub({ bateaId: b.id, sel: new Set(), cat: null }); }}
+                              style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Recolocar</button>
+                            <button onClick={() => setDelBatea(b.id)}
+                              style={{ ...btn(false), padding: "2px 9px", fontSize: 12, borderColor: C.warn, color: C.warn }}>Borrar</button>
+                          </span>
+                        </div>
+                        {delBatea === b.id && (
+                          <div style={{ marginTop: 10, padding: 10, border: `1px solid ${C.warn}`, borderRadius: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            <span style={{ fontSize: 13, color: C.text }}>
+                              ¿Borrar <b>{b.nombre}</b>? Se pierde su inventario de cuerdas; las operaciones y ventas históricas se conservan.
+                            </span>
+                            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+                              <button style={{ ...btn(true), background: C.warn, borderColor: C.warn }} onClick={() => borrarBatea(b.id)}>Sí, borrar</button>
+                              <button style={btn(false)} onClick={() => setDelBatea(null)}>No</button>
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                     <div style={{ margin: "14px 0" }}><Grid b={b} maxW={640} info={loteInfo(b)} /></div>
                     <div style={{ display: "flex", gap: 14, fontSize: 13, flexWrap: "wrap" }}>
