@@ -35,6 +35,9 @@ const C = {
   text: "#E8EFF2", mut: "#8FA6B0",
   rope: "#C9A15C", pink: "#E087B8", foam: "#5FB99F", warn: "#D97B66",
   sel: "#F2D48A",
+  // Plano: la celda libre tiene que verse sobre el panel, y la madera del
+  // emparrillado (vigas, aleros, eje) leerse como estructura, no como adorno.
+  libre: "#456A7C", viga: "#2C4E60", alero: "#7C97A7", tabla: "#0D1F28",
 };
 const CAT = {
   colectora: { label: "Colectora", color: C.rope },
@@ -106,7 +109,7 @@ const mensajeErrorAuth = (code) => ({
 function seed(id, nombre, fill) {
   const b = nuevaBatea(id, nombre, 20, 25);
   let i = 0;
-  for (const [cat, n] of fill) for (let k = 0; k < n; k++, i++) b.celdas[`${Math.floor(i / 20)}-${i % 20}`] = cat;
+  for (const [cat, n] of fill) for (let k = 0; k < n; k++, i++) b.celdas[`${Math.floor(i / b.ancho)}-${i % b.ancho}`] = cat;
   return b;
 }
 const seedBateas = [
@@ -180,14 +183,71 @@ const BarChart = ({ data, valueKey, color }) => {
   );
 };
 
-// ─── Rejilla posicional ───────────────────────────────────────────────────
-function Grid({ b, sel, onCell, elegible, info, maxW = 340 }) {
-  const size = 12, gap = 2;
-  const [drag, setDrag] = useState(null); // 'add' | 'del'
-  const [tip, setTip] = useState(null); // {x, y, txt}
+// ─── Geometría de la batea ────────────────────────────────────────────────
+// El plano ES el emparrillado. Cada fila es un CLARO (hueco entre dos vigas),
+// numerado desde la cadena de fondeo, que va siempre en la primera viga. Cada
+// columna es un PUNTÓN, donde se amarran las cuerdas. El eje parte cada claro
+// en dos MEDIOS CLAROS —babor a la izquierda, estribor a la derecha— y cada
+// medio claro se divide, del alero hacia el eje, en tres ZONAS: ala, entre
+// flotadores y medio. Así es como se nombra una cuerda hablando en la batea:
+// "3er claro de estribor, entre flotadores". Los puntones no se numeran.
+const ZONAS = ["ala", "entre", "medio"];
+const ZONA_LABEL = { ala: "Ala", entre: "Entre flotadores", medio: "Medio" };
+const ZONA_CORTA = { ala: "ala", entre: "entre flot.", medio: "medio" };
+const ZONA_MINI = { ala: "ala", entre: "flot.", medio: "medio" };
+// Rótulo de zona más largo que quepa en el hueco disponible (~4.6 px por letra a 9 px)
+const rotuloZona = (zona, ancho) => {
+  for (const t of [ZONA_CORTA[zona], ZONA_MINI[zona]]) if (t.length * 4.6 + 6 <= ancho) return t;
+  return null;
+};
+const LADOS = ["babor", "estribor"];
+const ord = (n) => (n === 1 ? "1er" : n === 3 ? "3er" : `${n}º`);
+const mediaManga = (b) => Math.max(1, Math.floor(b.ancho / 2));
+// Cortes de zona, en puntones contados desde el alero: "ala" ocupa los c1
+// primeros y "entre flotadores" llega hasta c2; el resto, hasta el eje, es "medio".
+const cortes = (b) => {
+  const m = mediaManga(b);
+  const c1 = Math.min(Math.max(1, b.zc?.[0] ?? Math.max(1, Math.round(m / 3))), m);
+  const c2 = Math.min(Math.max(c1, b.zc?.[1] ?? Math.max(2, Math.round((2 * m) / 3))), m);
+  return [c1, c2];
+};
+const ladoCol = (b, c) => (c < mediaManga(b) ? "babor" : "estribor");
+const dAlero = (b, c) => (c < mediaManga(b) ? c : b.ancho - 1 - c); // puntones hasta su alero
+const zonaCol = (b, c) => { const [c1, c2] = cortes(b), d = dAlero(b, c); return d < c1 ? "ala" : d < c2 ? "entre" : "medio"; };
+const colsDe = (b, lado, zona) => {
+  const cs = [];
+  for (let c = 0; c < b.ancho; c++) if (ladoCol(b, c) === lado && zonaCol(b, c) === zona) cs.push(c);
+  return cs;
+};
+const nombreBloque = (claro, lado, zona) => `${ord(claro)} claro de ${lado} · ${ZONA_LABEL[zona]}`;
+const dondeCelda = (b, k) => { const [r, c] = k.split("-").map(Number); return nombreBloque(r + 1, ladoCol(b, c), zonaCol(b, c)); };
+
+// ─── Plano de la batea ────────────────────────────────────────────────────
+// La selección va por bloque (medio claro × zona), que es como se trabaja de
+// verdad; "cuerda" queda como modo fino para retoques.
+function Grid({ b, sel, onCell, onCells, elegible, info }) {
+  const GUT = 26, HEAD = 34, FOOT = 16, MIN_CELL = 14;
+  const wrap = useRef(null);
+  const ultimo = useRef(null); // último bloque pintado durante un arrastre
+  const [dispW, setDispW] = useState(0);
+  const [gran, setGran] = useState("zona"); // "zona" | "cuerda"
+  const [drag, setDrag] = useState(null);
+  const [tip, setTip] = useState(null);
+  // El ancho real del contenedor manda: es lo único que garantiza que la celda
+  // no baje del mínimo táctil (antes se calculaba contra un maxW supuesto).
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const medir = () => setDispW(el.clientWidth);
+    medir();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Borde distinto por lote solo si >1 lote de la misma categoría en la batea
   const loteStroke = useMemo(() => {
-    const PAL = ["#FFFFFF", "#FFD166", "#EF476F", "#06D6A0", "#9b5de5", "#F78C6B"];
+    const PAL = ["#FFD166", "#EF476F", "#06D6A0", "#9b5de5", "#F78C6B", "#4CC9F0"];
     const byCat = {};
     for (const [k, cat] of Object.entries(b.celdas)) {
       const id = b.lotes?.[k] ?? "init";
@@ -200,61 +260,162 @@ function Grid({ b, sel, onCell, elegible, info, maxW = 340 }) {
     }
     return m;
   }, [b]);
-  const w = b.ancho * (size + gap), h = b.largo * (size + gap);
-  const MIN_CELL = 13; // px mínimos por celda en pantalla
-  const pxAncho = Math.max(maxW, b.ancho * MIN_CELL); // si no caben, el grid crece y se hace scroll
+
+  const cel = Math.max(MIN_CELL, (dispW - GUT) / b.ancho);
+  const gw = GUT + cel * b.ancho, gh = HEAD + cel * b.largo + FOOT;
+  const scroll = dispW > 0 && gw > dispW + 0.5;
+  const xEje = GUT + mediaManga(b) * cel;
+  const px = (c) => GUT + c * cel, py = (r) => HEAD + r * cel;
+
   const okK = (k) => {
     const cat = b.celdas[k], blq = b.bloq?.[k];
     return !!onCell && !blq && (!elegible || elegible(k, cat, blq));
   };
-  const touchK = (e) => {
-    const t = e.touches[0];
-    const el = document.elementFromPoint(t.clientX, t.clientY);
-    return el?.getAttribute?.("data-k") || null;
+  // Claves que abarca una pulsación, según la granularidad activa
+  const claves = (k) => {
+    if (gran === "cuerda") return okK(k) ? [k] : [];
+    const [r, c] = k.split("-").map(Number);
+    return colsDe(b, ladoCol(b, c), zonaCol(b, c)).map((x) => `${r}-${x}`).filter(okK);
   };
-  const onTS = onCell ? (e) => {
-    const k = touchK(e);
-    if (k && okK(k)) { const m = sel?.has(k) ? "del" : "add"; setDrag(m); onCell(k, m); }
-  } : undefined;
-  const onTM = onCell ? (e) => {
-    if (!drag) return;
-    const k = touchK(e);
-    if (k && okK(k)) onCell(k, drag);
-  } : undefined;
+  const idBloque = (k) => {
+    if (gran === "cuerda") return k;
+    const [r, c] = k.split("-").map(Number);
+    return `${r}|${ladoCol(b, c)}|${zonaCol(b, c)}`;
+  };
+  const pintar = (k, forzado) => {
+    if (!onCell) return;
+    const id = idBloque(k);
+    if (forzado && ultimo.current === id) return; // ya pintado en este arrastre
+    const ks = claves(k);
+    if (!ks.length) return;
+    const modo = forzado || (ks.every((x) => sel?.has(x)) ? "del" : "add");
+    ultimo.current = id;
+    if (!forzado) setDrag(modo);
+    if (onCells) onCells(ks, modo); else ks.forEach((x) => onCell(x, modo));
+  };
+  const soltar = () => { setDrag(null); ultimo.current = null; };
+
+  const texto = (k) => {
+    const donde = dondeCelda(b, k), cat = b.celdas[k];
+    if (b.bloq?.[k]) return `${donde} · anulada`;
+    if (!cat) return `${donde} · libre`;
+    return `${donde} · ${info ? info(k, cat) : CAT[cat].label}`;
+  };
+  const verTip = (k) => {
+    const [r, c] = k.split("-").map(Number);
+    const lim = Math.min(70, gw / 2);
+    setTip({ x: Math.min(Math.max(px(c) + cel / 2, lim), gw - lim), y: py(r), txt: texto(k) });
+  };
+  // En táctil no hay hover: la pulsación es la única vía a la ficha de la cuerda.
+  const kTouch = (e) => {
+    const t = e.touches[0];
+    return document.elementFromPoint(t.clientX, t.clientY)?.getAttribute?.("data-k") || null;
+  };
+  const onTS = (e) => {
+    const k = kTouch(e);
+    if (!k) return;
+    if (onCell) pintar(k); else verTip(k);
+  };
+  const onTM = (e) => {
+    if (!onCell || !drag) return;
+    const k = kTouch(e);
+    if (k) pintar(k, drag);
+  };
+
   return (
-    <div style={{ overflowX: pxAncho > maxW ? "auto" : "visible", maxWidth: maxW, WebkitOverflowScrolling: "touch" }}>
-    <div style={{ position: "relative", width: pxAncho > maxW ? pxAncho : "auto", maxWidth: pxAncho > maxW ? "none" : maxW }}>
-    {tip && <div style={{ position: "absolute", left: tip.x, top: tip.y, transform: "translate(-50%,-115%)",
-      background: "#0B1B26", color: "#E8F1F5", border: "1px solid #2A4A5E", borderRadius: 6,
-      padding: "4px 8px", fontSize: 12, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>}
-    <svg viewBox={`0 0 ${w} ${h}`}
-      style={{ width: "100%", display: "block", userSelect: "none", touchAction: onCell ? "none" : "auto" }}
-      onMouseUp={() => setDrag(null)} onMouseLeave={() => { setDrag(null); setTip(null); }}
-      onTouchStart={onTS} onTouchMove={onTM}
-      onTouchEnd={() => setDrag(null)} onTouchCancel={() => setDrag(null)}>
-      {Array.from({ length: b.largo }, (_, r) =>
-        Array.from({ length: b.ancho }, (_, c) => {
-          const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
-          const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
-          const ok = elegible ? elegible(k, cat, blq) : false;
-          const isSel = sel?.has(k);
-          return (
-            <rect key={k} data-k={k} x={c * (size + gap)} y={r * (size + gap)} width={size} height={size} rx={2}
-              fill={blq ? "#050E14" : cat ? CAT[cat].color : C.line}
-              stroke={isSel ? C.sel : ls || "none"} strokeWidth={isSel ? 2.5 : ls ? 1.3 : 0}
-              opacity={elegible && !ok && !isSel ? 0.3 : 1}
-              style={{ cursor: ok ? "pointer" : "default" }}
-              onMouseDown={ok ? () => { const m = sel?.has(k) ? "del" : "add"; setDrag(m); onCell(k, m); } : undefined}
-              onMouseEnter={(e) => { if (ok && drag) onCell(k, drag);
-                if (info && cat) { const rb = e.currentTarget.closest("div").getBoundingClientRect(), r2 = e.currentTarget.getBoundingClientRect();
-                  setTip({ x: r2.left - rb.left + r2.width / 2, y: r2.top - rb.top, txt: info(k, cat) }); }
-                else setTip(null); }}
-              onMouseLeave={() => setTip(null)} />
-          );
-        })
+    <div ref={wrap} style={{ width: "100%" }}>
+      {onCell && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12, color: C.mut, flexWrap: "wrap" }}>
+          <span>Seleccionar por</span>
+          <button style={mini(gran === "zona" ? C.sel : null)} onClick={() => setGran("zona")}>zona</button>
+          <button style={mini(gran === "cuerda" ? C.sel : null)} onClick={() => setGran("cuerda")}>cuerda</button>
+        </div>
       )}
-    </svg>
-    </div>
+      <div style={{ overflowX: scroll ? "auto" : "visible", overflowY: scroll ? "hidden" : "visible", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ position: "relative", width: gw, height: gh }}>
+          {tip && (
+            <div style={{ position: "absolute", left: tip.x, top: tip.y, transform: "translate(-50%,-115%)",
+              background: "#04121A", color: C.text, border: `1px solid ${C.alero}`, borderRadius: 6,
+              padding: "4px 8px", fontSize: 12, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>
+          )}
+          <svg width={gw} height={gh}
+            style={{ display: "block", userSelect: "none", touchAction: onCell ? "none" : "auto" }}
+            onMouseUp={soltar} onMouseLeave={() => { soltar(); setTip(null); }}
+            onTouchStart={onTS} onTouchMove={onTM} onTouchEnd={soltar} onTouchCancel={soltar}>
+
+            <rect x={GUT} y={HEAD} width={cel * b.ancho} height={cel * b.largo} fill={C.tabla} />
+
+            {/* Cuerdas */}
+            {Array.from({ length: b.largo }, (_, r) =>
+              Array.from({ length: b.ancho }, (_, c) => {
+                const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
+                const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
+                const ok = elegible ? elegible(k, cat, blq) : false;
+                const isSel = sel?.has(k);
+                const m = Math.max(1, cel * 0.14), s = cel - 2 * m;
+                return (
+                  <rect key={k} data-k={k} x={px(c) + m} y={py(r) + m} width={s} height={s} rx={Math.min(3, s * 0.22)}
+                    fill={blq ? C.tabla : cat ? CAT[cat].color : C.libre}
+                    stroke={isSel ? "#FFFFFF" : ls || (blq ? C.viga : "none")}
+                    strokeWidth={isSel ? 2 : ls ? 1.4 : blq ? 1.1 : 0}
+                    opacity={elegible && !ok && !isSel ? 0.28 : 1}
+                    style={{ cursor: ok ? "pointer" : "default" }}
+                    onMouseDown={onCell ? () => pintar(k) : undefined}
+                    onMouseEnter={() => { if (drag) pintar(k, drag); verTip(k); }}
+                    onMouseLeave={() => setTip(null)} />
+                );
+              })
+            )}
+            {/* Aspa en las celdas anuladas: se distinguen por forma, no solo por color */}
+            {Object.keys(b.bloq || {}).map((k) => {
+              const [r, c] = k.split("-").map(Number);
+              if (r >= b.largo || c >= b.ancho) return null;
+              const m = Math.max(1, cel * 0.14) + 1.5;
+              return <line key={"x" + k} x1={px(c) + m} y1={py(r) + m} x2={px(c) + cel - m} y2={py(r) + cel - m}
+                stroke={C.alero} strokeWidth={1.1} opacity={0.7} pointerEvents="none" />;
+            })}
+
+            {/* Vigas: la primera es la de la cadena */}
+            {Array.from({ length: b.largo + 1 }, (_, r) => (
+              <line key={"v" + r} x1={GUT} y1={py(r)} x2={gw} y2={py(r)} pointerEvents="none"
+                stroke={r === 0 ? C.alero : C.viga} strokeWidth={r === 0 ? 2.5 : 1} />
+            ))}
+            {/* Aleros: cierran el perímetro por los dos costados */}
+            <line x1={GUT} y1={HEAD} x2={GUT} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
+            <line x1={gw} y1={HEAD} x2={gw} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
+            {/* Cortes de zona */}
+            {LADOS.map((lado) => ZONAS.map((zona) => {
+              const cs = colsDe(b, lado, zona);
+              if (!cs.length || cs[0] === 0) return null;
+              return <line key={lado + zona} x1={px(cs[0])} y1={HEAD} x2={px(cs[0])} y2={py(b.largo)}
+                stroke={C.viga} strokeWidth={1} strokeDasharray="3 3" pointerEvents="none" />;
+            }))}
+            {/* Eje: separa babor de estribor */}
+            <line x1={xEje} y1={HEAD - 6} x2={xEje} y2={py(b.largo)} stroke={C.alero} strokeWidth={1.6} strokeDasharray="6 4" pointerEvents="none" />
+
+            {/* Cadena de fondeo, siempre en la primera viga */}
+            <g pointerEvents="none">
+              <line x1={xEje} y1={3} x2={xEje} y2={HEAD - 14} stroke={C.alero} strokeWidth={2} />
+              <circle cx={xEje} cy={4} r={3} fill="none" stroke={C.alero} strokeWidth={1.5} />
+              <text x={xEje + 9} y={8} fontSize="9" fill={C.alero} letterSpacing="1">CADENA</text>
+            </g>
+            {/* Costados y nº de claro */}
+            <text x={GUT + (mediaManga(b) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">BABOR</text>
+            <text x={xEje + ((b.ancho - mediaManga(b)) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">ESTRIBOR</text>
+            {Array.from({ length: b.largo }, (_, r) => (
+              <text key={"n" + r} x={GUT - 5} y={py(r) + cel / 2 + 3} textAnchor="end" fontSize="9" fill={C.mut} pointerEvents="none">{r + 1}</text>
+            ))}
+            {/* Zonas, rotuladas por su referencia física */}
+            {LADOS.map((lado) => ZONAS.map((zona) => {
+              const cs = colsDe(b, lado, zona);
+              const rot = cs.length && rotuloZona(zona, cs.length * cel);
+              if (!rot) return null;
+              return <text key={"z" + lado + zona} x={px(cs[0]) + (cs.length * cel) / 2} y={py(b.largo) + 12}
+                textAnchor="middle" fontSize="9" fill={C.mut} pointerEvents="none">{rot}</text>;
+            }))}
+          </svg>
+        </div>
+      </div>
     </div>
   );
 }
@@ -440,24 +601,28 @@ function GestionBatea({ db }) {
   };
 
   // ── Edición de batea ──
-  const [edit, setEdit] = useState(null); // {id, nombre, ancho, largo}
+  const [edit, setEdit] = useState(null); // {id, nombre, vigas, puntones, ala, entre}
   // Refs a la tarjeta de cada batea para poder llevar la pantalla al formulario de edición.
   const cardRefs = useRef({});
   // Al pulsar "Editar" el formulario sustituye a la cabecera de la tarjeta, que puede quedar
   // fuera de pantalla si la lista está desplazada. Subimos hasta ella para que se vea.
   const abrirEdit = (b) => {
     setDelBatea(null);
-    setEdit({ id: b.id, nombre: b.nombre, ancho: b.ancho, largo: b.largo });
+    const [c1, c2] = cortes(b);
+    setEdit({ id: b.id, nombre: b.nombre, vigas: b.largo + 1, puntones: b.ancho, ala: c1, entre: c2 - c1 });
     requestAnimationFrame(() => cardRefs.current[b.id]?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
   const cerrarEdit = () => { setEdit(null); setDelBatea(null); };
   const saveEdit = () => {
-    const a = parseInt(edit.ancho), l = parseInt(edit.largo);
-    if (!edit.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    // N vigas dejan N-1 claros entre ellas; la cadena va en la primera viga.
+    const a = parseInt(edit.puntones), v = parseInt(edit.vigas), l = v - 1;
+    if (!edit.nombre || !a || !v) return flash("Nombre, vigas y puntones requeridos.");
+    if (v < 2) return flash("Una batea necesita al menos 2 vigas (1 claro).");
+    const ala = Math.max(1, parseInt(edit.ala) || 1), entre = Math.max(0, parseInt(edit.entre) || 0);
     pushHistorial(`Editar batea "${edit.nombre}"`);
     setBateas(bateas.map((b) => {
       if (b.id !== edit.id) return b;
-      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {}, extra: { ...b.extra } };
+      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, zc: [ala, ala + entre], celdas: {}, lotes: {}, bloq: {}, extra: { ...b.extra } };
       let fuera = 0, flotFuera = 0;
       for (const [k, cat] of Object.entries(b.celdas)) {
         const [r, c] = k.split("-").map(Number);
@@ -513,9 +678,52 @@ function GestionBatea({ db }) {
       setBateas(bs); setReub({ ...reub, sel });
     }
   };
+  // Selección por bloque: el gesto normal es "todo el 3er claro de babor, entre
+  // flotadores", no cuerda a cuerda. La rejilla resuelve qué celdas abarca y estos
+  // handlers las aplican de golpe (llamar al de una celda N veces perdería estado).
+  const reubCells = (ks, modo) => {
+    if (reub.cat) { // ubicar cuerdas sin sitio: rellena las libres del bloque
+      const bs = clon(bateas), b = bs.find((x) => x.id === reub.bateaId);
+      let n = 0;
+      for (const k of ks) {
+        if (b.extra[reub.cat] <= 0) break;
+        if (!b.celdas[k] && !b.bloq?.[k]) { b.celdas[k] = reub.cat; b.extra[reub.cat]--; n++; }
+      }
+      if (!n) return;
+      setBateas(bs);
+      if (b.extra[reub.cat] === 0) setReub({ ...reub, cat: null });
+      return;
+    }
+    const b0 = bx(reub.bateaId);
+    const ocupadas = ks.filter((k) => b0.celdas[k] && !b0.bloq?.[k]);
+    if (ocupadas.length) { // formar el grupo de origen
+      const sel = new Set(reub.sel);
+      ocupadas.forEach((k) => (modo === "del" ? sel.delete(k) : sel.add(k)));
+      setReub({ ...reub, sel });
+      return;
+    }
+    if (reub.sel.size) { // bloque libre: vuelca ahí el grupo, en orden de selección
+      const bs = clon(bateas), b = bs.find((x) => x.id === reub.bateaId);
+      const sel = new Set(reub.sel);
+      for (const k of ks) {
+        if (!sel.size) break;
+        if (b.celdas[k] || b.bloq?.[k]) continue;
+        const from = sel.values().next().value;
+        b.celdas[k] = b.celdas[from]; delete b.celdas[from];
+        if (b.lotes?.[from] != null) { b.lotes[k] = b.lotes[from]; delete b.lotes[from]; }
+        sel.delete(from);
+      }
+      setBateas(bs); setReub({ ...reub, sel });
+    }
+  };
   const flotCell = (k, modo) => setFlot((f) => {
     const s = new Set(f.sel);
     modo === "del" ? s.delete(k) : s.add(k);
+    return { ...f, sel: s };
+  });
+  const flotCells = (ks, modo) => setFlot((f) => {
+    const s = new Set(f.sel);
+    ks.forEach((k) => (modo === "del" ? s.delete(k) : s.add(k)));
     return { ...f, sel: s };
   });
   const saveFlot = () => {
@@ -526,14 +734,15 @@ function GestionBatea({ db }) {
   };
 
   // ── Alta de batea ──
-  const [nb, setNb] = useState({ nombre: "", ancho: "", largo: "" });
+  const [nb, setNb] = useState({ nombre: "", puntones: "", vigas: "" });
   const addBatea = () => {
-    const a = parseInt(nb.ancho), l = parseInt(nb.largo);
-    if (!nb.nombre || !a || !l) return flash("Nombre, ancho y largo requeridos.");
+    const a = parseInt(nb.puntones), v = parseInt(nb.vigas);
+    if (!nb.nombre || !a || !v) return flash("Nombre, vigas y puntones requeridos.");
+    if (v < 2) return flash("Una batea necesita al menos 2 vigas (1 claro).");
     pushHistorial(`Añadir batea "${nb.nombre}"`);
-    const b = nuevaBatea(Date.now(), nb.nombre, a, l);
+    const b = nuevaBatea(Date.now(), nb.nombre, a, v - 1);
     setBateas([...bateas, b]);
-    setNb({ nombre: "", ancho: "", largo: "" });
+    setNb({ nombre: "", puntones: "", vigas: "" });
     setFlot({ bateaId: b.id, sel: new Set() });
   };
 
@@ -628,6 +837,14 @@ function GestionBatea({ db }) {
   };
 
   const faseActual = pend && pend.fases[pend.fase];
+  const toggleCells = (ks, modo) => setPend((p) => {
+    const s = new Set(p.sel), lim = p.fases[p.fase].n;
+    for (const k of ks) {
+      if (modo === "del") s.delete(k);
+      else if (!s.has(k) && s.size < lim) s.add(k);
+    }
+    return { ...p, sel: s };
+  });
   const toggleCell = (k, modo) => {
     setPend((p) => {
       const s = new Set(p.sel);
@@ -692,7 +909,7 @@ function GestionBatea({ db }) {
       pend.sel.forEach((k) => { b.celdas[k] = f.cat; b.lotes[k] = pend.op.id; });
       if (resto > 0) { // sobrecapacidad o sin ubicar: se registra igual + aviso
         b.extra[f.cat] += resto;
-        flash(`${b.nombre}: ${resto} cuerdas sin celda libre → registradas sin ubicar (posible sobrecapacidad).`);
+        flash(`${b.nombre}: ${resto} cuerdas sin punto libre → registradas sin ubicar (posible sobrecapacidad).`);
       }
     } else {
       // Traza de qué lote(s) salen las cuerdas retiradas, para la ficha de trazabilidad
@@ -705,7 +922,7 @@ function GestionBatea({ db }) {
       if (resto > 0) {
         const deExtra = Math.min(resto, b.extra[f.cat]);
         b.extra[f.cat] -= deExtra;
-        if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} celdas más de ${CAT[f.cat].label}.`);
+        if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} cuerdas más de ${CAT[f.cat].label}.`);
         if (deExtra > 0) origenFase.extra = (origenFase.extra || 0) + deExtra;
       }
       origen = { ...origen };
@@ -856,9 +1073,9 @@ function GestionBatea({ db }) {
                 Flotadores — {b.nombre}
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
-                Marca las celdas ocupadas por flotadores: quedan anuladas permanentemente y no cuentan como capacidad. Marcadas: {flot.sel.size}.
+                Marca los puntos que quedan anulados —sobre un flotador o donde no se puede amarrar—: no cuentan como capacidad. Marcados: {flot.sel.size}.
               </p>
-              <Grid b={{ ...b, bloq: {} }} sel={flot.sel} onCell={flotCell} maxW={480}
+              <Grid b={{ ...b, bloq: {} }} sel={flot.sel} onCell={flotCell} onCells={flotCells}
                 elegible={(k, cat) => !cat} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={saveFlot}>Guardar flotadores</button>
@@ -877,11 +1094,11 @@ function GestionBatea({ db }) {
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
                 {reub.cat
-                  ? `Ubicando ${CAT[reub.cat].label} sin ubicar (quedan ${b.extra[reub.cat]}): pulsa celdas libres.`
+                  ? `Ubicando ${CAT[reub.cat].label} sin ubicar (quedan ${b.extra[reub.cat]}): pulsa zonas libres del plano.`
                   : reub.sel.size
-                    ? `${reub.sel.size} cuerdas en el grupo: cada pulsación (o arrastre) sobre celdas libres mueve una, en orden de selección. Lote y nota se conservan.`
-                    : "Selecciona cuerdas (clic o arrastre) para formar el grupo; luego pulsa/arrastra sobre celdas libres para moverlas."}
-                {" · "}Celdas libres: <b>{fmtN(libres(b))}</b>
+                    ? `${reub.sel.size} cuerdas en el grupo: cada pulsación (o arrastre) sobre zonas libres las va colocando, en orden de selección. Lote y nota se conservan.`
+                    : "Selecciona cuerdas (clic o arrastre) para formar el grupo; luego pulsa/arrastra sobre zonas libres para moverlas."}
+                {" · "}Puntos libres: <b>{fmtN(Math.max(0, libres(b)))}</b>
               </p>
               {extraTot(b) > 0 && !reub.sel.size && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
@@ -893,9 +1110,9 @@ function GestionBatea({ db }) {
                   ))}
                 </div>
               )}
-              <Grid b={b} maxW={480} info={loteInfo(b)}
+              <Grid b={b} info={loteInfo(b)}
                 sel={reub.sel}
-                onCell={reubCell}
+                onCell={reubCell} onCells={reubCells}
                 elegible={(k, cat, blq) => !blq && (reub.cat ? !cat : true)} />
               <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
                 {reub.sel.size > 0 && <button style={btn(false)} onClick={() => setReub({ ...reub, sel: new Set() })}>Vaciar grupo</button>}
@@ -913,12 +1130,17 @@ function GestionBatea({ db }) {
                 </span>
               ))}
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.line, display: "inline-block" }} />Libre
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.libre, display: "inline-block" }} />Libre
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: "#050E14", border: `1px solid ${C.line}`, display: "inline-block" }} />Flotador (anulada)
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.tabla, border: `1px solid ${C.alero}`, display: "inline-block" }} />Anulada
               </span>
             </div>
+            <p style={{ color: C.mut, fontSize: 12, margin: "-8px 0 18px", lineHeight: 1.5 }}>
+              El plano es el emparrillado visto desde arriba: cada fila es un claro, numerado desde la cadena,
+              que va en la primera viga. El eje separa babor de estribor, y dentro de cada medio claro se marcan
+              las zonas del ala, entre flotadores y del medio. Pulsa una cuerda para ver dónde está y de qué lote es.
+            </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,460px),1fr))", gap: 16 }}>
               {bateas.map((b) => {
@@ -935,8 +1157,10 @@ function GestionBatea({ db }) {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
-                          <Field label="Ancho" w={70}><input style={inp} type="number" value={edit.ancho} onChange={(e) => setEdit({ ...edit, ancho: e.target.value })} /></Field>
-                          <Field label="Largo" w={70}><input style={inp} type="number" value={edit.largo} onChange={(e) => setEdit({ ...edit, largo: e.target.value })} /></Field>
+                          <Field label="Vigas" w={70}><input style={inp} type="number" value={edit.vigas} onChange={(e) => setEdit({ ...edit, vigas: e.target.value })} /></Field>
+                          <Field label="Puntones" w={80}><input style={inp} type="number" value={edit.puntones} onChange={(e) => setEdit({ ...edit, puntones: e.target.value })} /></Field>
+                          <Field label="Ala" w={64}><input style={inp} type="number" value={edit.ala} onChange={(e) => setEdit({ ...edit, ala: e.target.value })} /></Field>
+                          <Field label="Entre flot." w={80}><input style={inp} type="number" value={edit.entre} onChange={(e) => setEdit({ ...edit, entre: e.target.value })} /></Field>
                           <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                             <button style={btn(true)} onClick={saveEdit}>Guardar</button>
                             <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Flotadores</button>
@@ -949,7 +1173,7 @@ function GestionBatea({ db }) {
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                           <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", margin: 0 }}>{b.nombre}</h2>
                           <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, color: sobre ? C.warn : C.mut }}>
-                            <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.ancho}×{b.largo}</span>
+                            <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.largo + 1} vigas · {b.ancho} puntones</span>
                             <button onClick={() => abrirEdit(b)}
                               style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Editar</button>
                             <button onClick={() => { pushHistorial(`Recolocar — ${b.nombre}`); setReub({ bateaId: b.id, sel: new Set(), cat: null }); }}
@@ -971,7 +1195,7 @@ function GestionBatea({ db }) {
                         )}
                       </>
                     )}
-                    <div style={{ margin: "14px 0" }}><Grid b={b} maxW={640} info={loteInfo(b)} /></div>
+                    <div style={{ margin: "14px 0" }}><Grid b={b} info={loteInfo(b)} /></div>
                     <div style={{ display: "flex", gap: 14, fontSize: 13, flexWrap: "wrap" }}>
                       {CATS.map((c) => (
                         <span key={c}><b style={{ color: CAT[c].color }}>{fmtN(stock(b, c))}</b> <span style={{ color: C.mut }}>{c === "desdoble" ? "mexilla" : c}</span></span>
@@ -994,9 +1218,10 @@ function GestionBatea({ db }) {
 
               <div style={{ background: C.panel2, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 10, justifyContent: "center" }}>
                 <Field label="Nueva batea"><input style={inp} placeholder="Nombre" value={nb.nombre} onChange={(e) => setNb({ ...nb, nombre: e.target.value })} /></Field>
+                <p style={{ color: C.mut, fontSize: 12, margin: 0 }}>Los claros salen de las vigas: 26 vigas dejan 25 claros. Las zonas (ala, entre flotadores, medio) se ajustan luego en Editar.</p>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <Field label="Ancho (cuerdas)"><input style={inp} type="number" placeholder="20" value={nb.ancho} onChange={(e) => setNb({ ...nb, ancho: e.target.value })} /></Field>
-                  <Field label="Largo (cuerdas)"><input style={inp} type="number" placeholder="25" value={nb.largo} onChange={(e) => setNb({ ...nb, largo: e.target.value })} /></Field>
+                  <Field label="Vigas"><input style={inp} type="number" placeholder="26" value={nb.vigas} onChange={(e) => setNb({ ...nb, vigas: e.target.value })} /></Field>
+                  <Field label="Puntones"><input style={inp} type="number" placeholder="20" value={nb.puntones} onChange={(e) => setNb({ ...nb, puntones: e.target.value })} /></Field>
                 </div>
                 <button style={btn(true)} onClick={addBatea}>Añadir batea</button>
               </div>
@@ -1244,15 +1469,15 @@ function GestionBatea({ db }) {
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
                 Fase {pend.fase + 1} de {pend.fases.length} · marcadas {pend.sel.size} / {f.n}
-                {f.modo === "poner" && <> · celdas libres en {b.nombre}: <b>{fmtN(libres(b))}</b></>}
+                {f.modo === "poner" && <> · puntos libres en {b.nombre}: <b>{fmtN(Math.max(0, libres(b)))}</b></>}
                 {f.modo === "poner" && falta > 0 && <> · las no ubicadas se registran igualmente con aviso</>}
               </p>
               {f.modo === "poner" && libres(b) < falta && (
                 <div style={{ marginBottom: 10 }}>
-                  <Warn>Solo quedan {fmtN(libres(b))} celdas libres para {falta} pendientes: {falta - libres(b)} se registrarán sin ubicar (sobrecapacidad) si confirmas así.</Warn>
+                  <Warn>Solo quedan {fmtN(Math.max(0, libres(b)))} puntos libres para {falta} pendientes: {falta - Math.max(0, libres(b))} se registrarán sin ubicar (sobrecapacidad) si confirmas así.</Warn>
                 </div>
               )}
-              <Grid b={b} sel={pend.sel} onCell={toggleCell} maxW={480}
+              <Grid b={b} sel={pend.sel} onCell={toggleCell} onCells={toggleCells}
                 elegible={(k, cat, blq) => !blq && (pend.sel.has(k) || (f.modo === "poner" ? !cat : cat === f.cat))} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={confirmarFase}>
