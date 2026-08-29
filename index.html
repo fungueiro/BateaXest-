@@ -699,13 +699,27 @@ function GestionBatea({ db }) {
       : { d, c0: Math.max(1, Math.round(largo * 0.2)), c1: Math.max(1, Math.round(largo * 0.8)) };
     return { ...f, flot: [...f.flot, nuevo].sort((a, c) => a.d - c.d) };
   });
-  const flotClaro = (d, campo, valor, largo) => setFlot((f) => ({
-    ...f, flot: f.flot.map((x) => {
-      if (x.d !== d) return x;
-      const v = Math.min(Math.max(1, parseInt(valor) || 1), largo);
-      return campo === "c0" ? { ...x, c0: v, c1: Math.max(v, x.c1) } : { ...x, c1: v, c0: Math.min(v, x.c0) };
-    }),
-  }));
+  // Mientras escribes, el texto se guarda aparte y los claros del flotador no se
+  // tocan: si se normalizara en cada tecla, vaciar la casilla pondría un 1 y ya no
+  // podrías teclear el número que querías. Se cuadra al salir del campo.
+  const flotEscribe = (d, campo, texto) => setFlot((f) => ({ ...f, edit: { d, campo, texto } }));
+  const flotCuadra = (largo) => setFlot((f) => {
+    if (!f.edit) return f;
+    const { d, campo, texto } = f.edit;
+    return {
+      ...f, edit: null,
+      flot: f.flot.map((x) => {
+        if (x.d !== d) return x;
+        const n = parseInt(texto);
+        if (!n) return x; // vacío o sin sentido: se queda como estaba
+        const v = Math.min(Math.max(1, n), largo);
+        const y = { ...x, [campo]: v };
+        return y.c0 <= y.c1 ? y : { ...y, c0: Math.min(y.c0, y.c1), c1: Math.max(y.c0, y.c1) };
+      }),
+    };
+  });
+  const flotTexto = (f, x, campo) =>
+    f.edit && f.edit.d === x.d && f.edit.campo === campo ? f.edit.texto : String(x[campo]);
 
   // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
   const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
@@ -1180,11 +1194,14 @@ function GestionBatea({ db }) {
                     {flot.flot.map((f) => (
                       <div key={f.d} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 6, fontSize: 12.5, color: C.mut }}>
                         <span style={{ minWidth: 96 }}>Puntón {f.d + 1} — claros</span>
-                        <input style={{ ...inp, width: 62, padding: "5px 8px" }} type="number" min={1} max={b.largo}
-                          value={f.c0} onChange={(e) => flotClaro(f.d, "c0", e.target.value, b.largo)} />
-                        <span>a</span>
-                        <input style={{ ...inp, width: 62, padding: "5px 8px" }} type="number" min={1} max={b.largo}
-                          value={f.c1} onChange={(e) => flotClaro(f.d, "c1", e.target.value, b.largo)} />
+                        {["c0", "a", "c1"].map((campo) => campo === "a" ? <span key="a">a</span> : (
+                          <input key={campo} style={{ ...inp, width: 62, padding: "5px 8px" }}
+                            type="text" inputMode="numeric" aria-label={campo === "c0" ? "Primer claro" : "Último claro"}
+                            value={flotTexto(flot, f, campo)}
+                            onChange={(e) => flotEscribe(f.d, campo, e.target.value)}
+                            onBlur={() => flotCuadra(b.largo)}
+                            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+                        ))}
                         <span>de {b.largo}</span>
                       </div>
                     ))}
