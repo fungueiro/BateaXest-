@@ -65,11 +65,8 @@ const descargarCSV = (nombre, headers, rows) => {
 const nuevaBatea = (id, nombre, ancho, largo) => ({
   id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, extra: { colectora: 0, desdoble: 0, venta: 0 },
 });
-// Los puntos que caen sobre un flotador no son puntos de amarre, igual que los
-// anulados a mano. Se cuentan una sola vez si coinciden. (puntosFlot y kFlot son
-// geometría del plano y viven más abajo, con el resto.)
-const cap = (b) => b.ancho * b.largo - puntosFlot(b)
-  - Object.keys(b.bloq || {}).filter((k) => !kFlot(b, k)).length;
+// Los puntos anulados a mano (flotador, cadena, lo que sea) no son capacidad.
+const cap = (b) => b.ancho * b.largo - Object.keys(b.bloq || {}).length;
 const nCeldas = (b, cat) => Object.values(b.celdas).filter((c) => !cat || c === cat).length;
 const stock = (b, cat) => nCeldas(b, cat) + b.extra[cat];
 const ocup = (b) => nCeldas(b) + CATS.reduce((s, c) => s + b.extra[c], 0);
@@ -209,33 +206,21 @@ const ord = (n) => (n === 1 ? "1er" : n === 3 ? "3er" : `${n}º`);
 const mediaManga = (b) => Math.max(1, Math.floor(b.ancho / 2));
 const ladoCol = (b, c) => (c < mediaManga(b) ? "babor" : "estribor");
 const dAlero = (b, c) => (c < mediaManga(b) ? c : b.ancho - 1 - c); // puntones hasta su alero
-// Los flotadores van longitudinales, bajo las vigas principales, y son simétricos:
-// se guardan por el puntón que cubren en un costado, contado desde el alero (0 = el
-// pegado a él), y se reflejan en el otro. No llegan a los extremos de la batea: cada
-// uno abarca un tramo de claros (c0..c1, 1 = el de la cadena), y delante y detrás de
-// él ese mismo puntón sí se puede amarrar. Encima de uno, no.
-const flotDe = (b) => (b.flot || [])
-  .map((f) => (typeof f === "number" ? { d: f } : f)) // formato antiguo: toda la eslora
-  .filter((f) => f && Number.isInteger(f.d) && f.d >= 0 && f.d < mediaManga(b))
-  .map((f) => ({ d: f.d, c0: Math.max(1, f.c0 ?? 1), c1: Math.min(b.largo, f.c1 ?? b.largo) }))
-  .filter((f) => f.c1 >= f.c0)
-  .sort((x, y) => x.d - y.d);
-// El flotador que pasa por un puntón (para las zonas, que son cosa del ancho)
-const colFlot = (b, c) => flotDe(b).find((f) => f.d === dAlero(b, c)) || null;
-// Si ese punto de amarre concreto queda encima del flotador (para la capacidad)
-const esFlot = (b, r, c) => { const f = colFlot(b, c); return !!f && r + 1 >= f.c0 && r + 1 <= f.c1; };
-const kFlot = (b, k) => { const [r, c] = k.split("-").map(Number); return esFlot(b, r, c); };
-const puntosFlot = (b) => {
-  let n = 0;
-  for (let c = 0; c < b.ancho; c++) { const f = colFlot(b, c); if (f) n += f.c1 - f.c0 + 1; }
-  return n;
-};
+// Los flotadores van longitudinales y son simétricos: se guardan por el puntón que
+// cubren en un costado, contado desde el alero (0 = el pegado a él), y se reflejan
+// en el otro. Aquí sirven para una sola cosa: decir dónde acaba el ala y dónde
+// empieza el medio. Lo que no se puede amarrar —el propio flotador, la cadena, lo
+// que sea— se anula punto a punto sobre el plano, que es más fiel y más rápido que
+// describirlo con números.
+const flotDe = (b) => [...new Set((b.flot || []).map((f) => (typeof f === "number" ? f : f?.d)))]
+  .filter((d) => Number.isInteger(d) && d >= 0 && d < mediaManga(b)).sort((x, y) => x - y);
+const esFlot = (b, c) => flotDe(b).includes(dAlero(b, c));
 // Cortes de zona: los marcan los propios flotadores. Sin flotadores definidos
 // todavía, se reparte la media manga en tres para tener algo con lo que hablar.
 const cortes = (b) => {
   const m = mediaManga(b), f = flotDe(b);
   if (!f.length) return [Math.min(Math.max(1, Math.round(m / 3)), m), Math.min(Math.max(2, Math.round((2 * m) / 3)), m)];
-  return [f[0].d, Math.min(f[f.length - 1].d + 1, m)];
+  return [f[0], Math.min(f[f.length - 1] + 1, m)];
 };
 const zonaCol = (b, c) => { const [c1, c2] = cortes(b), d = dAlero(b, c); return d < c1 ? "ala" : d < c2 ? "entre" : "medio"; };
 const colsDe = (b, lado, zona) => {
@@ -293,7 +278,6 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
   const okK = (k) => {
     const cat = b.celdas[k], blq = b.bloq?.[k];
-    if (kFlot(b, k)) return false;
     return !!onCell && !blq && (!elegible || elegible(k, cat, blq));
   };
   // Claves que abarca una pulsación, según la granularidad activa
@@ -322,7 +306,6 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
   const texto = (k) => {
     const donde = dondeCelda(b, k), cat = b.celdas[k];
-    if (kFlot(b, k)) return `${donde} · flotador`;
     if (b.bloq?.[k]) return `${donde} · anulada`;
     if (!cat) return `${donde} · libre`;
     return `${donde} · ${info ? info(k, cat) : CAT[cat].label}`;
@@ -371,19 +354,9 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
             <rect x={GUT} y={HEAD} width={cel * b.ancho} height={cel * b.largo} fill={C.tabla} />
 
-            {/* Flotadores: van por debajo y no llegan a los extremos de la batea */}
-            {Array.from({ length: b.ancho }, (_, c) => {
-              const f = colFlot(b, c);
-              return f && (
-                <rect key={"f" + c} x={px(c)} y={py(f.c0 - 1)} width={cel} height={cel * (f.c1 - f.c0 + 1)}
-                  rx={Math.min(4, cel / 2)} fill={C.flota} stroke={C.viga} strokeWidth={0.8} pointerEvents="none" />
-              );
-            })}
-
             {/* Cuerdas */}
             {Array.from({ length: b.largo }, (_, r) =>
               Array.from({ length: b.ancho }, (_, c) => {
-                if (esFlot(b, r, c)) return null;
                 const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
                 const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
                 const ok = elegible ? elegible(k, cat, blq) : false;
@@ -405,7 +378,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
             {/* Aspa en las celdas anuladas: se distinguen por forma, no solo por color */}
             {Object.keys(b.bloq || {}).map((k) => {
               const [r, c] = k.split("-").map(Number);
-              if (r >= b.largo || c >= b.ancho || esFlot(b, r, c)) return null;
+              if (r >= b.largo || c >= b.ancho) return null;
               const m = Math.max(1, cel * 0.14) + 1.5;
               return <line key={"x" + k} x1={px(c) + m} y1={py(r) + m} x2={px(c) + cel - m} y2={py(r) + cel - m}
                 stroke={C.alero} strokeWidth={1.1} opacity={0.7} pointerEvents="none" />;
@@ -441,6 +414,11 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
             <text x={xEje + ((b.ancho - mediaManga(b)) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">ESTRIBOR</text>
             {Array.from({ length: b.largo }, (_, r) => (
               <text key={"n" + r} x={GUT - 5} y={py(r) + cel / 2 + 3} textAnchor="end" fontSize="9" fill={C.mut} pointerEvents="none">{r + 1}</text>
+            ))}
+            {/* Por dónde pasan los flotadores: referencia de zona, bajo el plano */}
+            {Array.from({ length: b.ancho }, (_, c) => esFlot(b, c) && (
+              <rect key={"f" + c} x={px(c) + cel * 0.2} y={py(b.largo) + 2} width={cel * 0.6} height={3}
+                rx={1.5} fill={C.alero} opacity={0.8} pointerEvents="none" />
             ))}
             {/* Zonas, rotuladas por su referencia física */}
             {LADOS.map((lado) => ZONAS.map((zona) => {
@@ -689,37 +667,12 @@ function GestionBatea({ db }) {
   // ── Flotadores (celdas anuladas permanentemente) ──
   const [flot, setFlot] = useState(null); // { bateaId, sel:Set }
   const abrirFlot = (b) => setFlot({ bateaId: b.id, sel: new Set(Object.keys(b.bloq || {})), flot: flotDe(b) });
+
   // Poner o quitar un flotador: es un puntón contado desde el alero, y va simétrico
   // en los dos costados.
-  const toggleFlot = (d, largo) => setFlot((f) => {
-    if (f.flot.some((x) => x.d === d)) return { ...f, flot: f.flot.filter((x) => x.d !== d) };
-    // Por defecto, el tramo central: un flotador no llega a proa ni a popa.
-    const otro = f.flot[0];
-    const nuevo = otro ? { d, c0: otro.c0, c1: otro.c1 }
-      : { d, c0: Math.max(1, Math.round(largo * 0.2)), c1: Math.max(1, Math.round(largo * 0.8)) };
-    return { ...f, flot: [...f.flot, nuevo].sort((a, c) => a.d - c.d) };
-  });
-  // Mientras escribes, el texto se guarda aparte y los claros del flotador no se
-  // tocan: si se normalizara en cada tecla, vaciar la casilla pondría un 1 y ya no
-  // podrías teclear el número que querías. Se cuadra al salir del campo.
-  const flotEscribe = (d, campo, texto) => setFlot((f) => ({ ...f, edit: { d, campo, texto } }));
-  const flotCuadra = (largo) => setFlot((f) => {
-    if (!f.edit) return f;
-    const { d, campo, texto } = f.edit;
-    return {
-      ...f, edit: null,
-      flot: f.flot.map((x) => {
-        if (x.d !== d) return x;
-        const n = parseInt(texto);
-        if (!n) return x; // vacío o sin sentido: se queda como estaba
-        const v = Math.min(Math.max(1, n), largo);
-        const y = { ...x, [campo]: v };
-        return y.c0 <= y.c1 ? y : { ...y, c0: Math.min(y.c0, y.c1), c1: Math.max(y.c0, y.c1) };
-      }),
-    };
-  });
-  const flotTexto = (f, x, campo) =>
-    f.edit && f.edit.d === x.d && f.edit.campo === campo ? f.edit.texto : String(x[campo]);
+  const toggleFlot = (d) => setFlot((f) => ({
+    ...f, flot: f.flot.includes(d) ? f.flot.filter((x) => x !== d) : [...f.flot, d].sort((a, c) => a - c),
+  }));
 
   // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
   const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
@@ -798,27 +751,28 @@ function GestionBatea({ db }) {
     return { ...f, sel: s };
   });
   const saveFlot = () => {
-    pushHistorial(`Flotadores — ${bn(flot.bateaId)}`);
+    pushHistorial(`Plano — ${bn(flot.bateaId)}`);
     let aviso = "";
     setBateas(bateas.map((b0) => {
       if (b0.id !== flot.bateaId) return b0;
       const b = { ...b0, flot: flot.flot, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])),
         celdas: { ...b0.celdas }, lotes: { ...b0.lotes }, extra: { ...b0.extra } };
-      // Encima de un flotador no puede quedar ninguna cuerda: se buscan sitio en su
-      // mismo claro y, si no lo hay, pasan a "sin ubicar" para recolocarlas a mano.
-      const libre = (k) => !b.celdas[k] && !b.bloq[k] && !kFlot(b, k);
+      // Un punto anulado no puede tener cuerda: esas cuerdas nunca estuvieron ahí de
+      // verdad. Se les busca sitio en su mismo claro y, si no lo hay, quedan sin ubicar.
+      const libre = (k) => !b.celdas[k] && !b.bloq[k];
       let movidas = 0, sinSitio = 0;
-      for (const k of Object.keys(b0.celdas)) {
+      for (const k of Object.keys(b.bloq)) {
+        const cat = b.celdas[k];
+        if (!cat) continue;
         const [r] = k.split("-").map(Number);
-        if (!kFlot(b, k)) continue;
-        const cat = b.celdas[k], lote = b.lotes[k];
+        const lote = b.lotes[k];
         delete b.celdas[k]; delete b.lotes[k];
         let hueco = null;
         for (let x = 0; x < b.ancho && !hueco; x++) if (libre(`${r}-${x}`)) hueco = `${r}-${x}`;
         if (hueco) { b.celdas[hueco] = cat; if (lote != null) b.lotes[hueco] = lote; movidas++; }
         else { b.extra[cat]++; sinSitio++; }
       }
-      if (movidas || sinSitio) aviso = `${b.nombre}: ${movidas ? movidas + " cuerdas movidas a su mismo claro" : ""}` +
+      if (movidas || sinSitio) aviso = `${b.nombre}: ${movidas ? movidas + " cuerdas apartadas dentro de su claro" : ""}` +
         `${movidas && sinSitio ? " · " : ""}${sinSitio ? sinSitio + " sin ubicar (usa Recolocar)" : ""}.`;
       return b;
     }));
@@ -1163,13 +1117,13 @@ function GestionBatea({ db }) {
           return (
             <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
               <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
-                Flotadores — {b.nombre}
+                Plano — {b.nombre}
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
-                Los flotadores van longitudinales por debajo, y son simétricos: marca por qué puntones
-                pasan contando desde el alero. Encima de uno no se amarra, pero no llegan a los
-                extremos: di de qué claro a qué claro alcanza cada uno, y delante y detrás se sigue
-                amarrando. Son ellos los que marcan dónde acaba el ala y dónde empieza el medio.
+                Anula sobre el plano los puntos donde no se puede amarrar y así vas dibujando
+                los flotadores, la cadena y lo que haga falta. Con “zona” pintas medio claro
+                entero de una vez; con “cuerda”, punto a punto. Si anulas un punto que tenía
+                cuerda, la cuerda se aparta sola al guardar.
               </p>
               {(() => {
                 // Con los cambios sin guardar, para que la cuenta sea la de lo que estás viendo
@@ -1177,49 +1131,37 @@ function GestionBatea({ db }) {
                 const m = mediaManga(bp), [c1, c2] = cortes(bp);
                 return (
                   <>
+                    <p style={{ color: C.mut, fontSize: 12.5, margin: "0 0 6px" }}>
+                      Y por dónde pasan los flotadores, contando desde el alero: no anulan nada,
+                      solo dicen dónde acaba el ala y dónde empieza el medio.
+                    </p>
                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
                       {Array.from({ length: m }, (_, d) => {
-                        const puesto = flot.flot.some((x) => x.d === d);
+                        const puesto = flot.flot.includes(d);
                         return (
-                          <button key={d} onClick={() => toggleFlot(d, b.largo)}
+                          <button key={d} onClick={() => toggleFlot(d)}
                             aria-pressed={puesto}
                             title={`Puntón ${d + 1} desde el alero`}
                             style={{ ...mini(puesto ? C.sel : null), minWidth: 30,
-                              background: puesto ? C.flota : "transparent", fontWeight: puesto ? 700 : 400 }}>
+                              background: puesto ? C.panel2 : "transparent", fontWeight: puesto ? 700 : 400 }}>
                             {d + 1}
                           </button>
                         );
                       })}
                     </div>
-                    {flot.flot.map((f) => (
-                      <div key={f.d} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 6, fontSize: 12.5, color: C.mut }}>
-                        <span style={{ minWidth: 96 }}>Puntón {f.d + 1} — claros</span>
-                        {["c0", "a", "c1"].map((campo) => campo === "a" ? <span key="a">a</span> : (
-                          <input key={campo} style={{ ...inp, width: 62, padding: "5px 8px" }}
-                            type="text" inputMode="numeric" aria-label={campo === "c0" ? "Primer claro" : "Último claro"}
-                            value={flotTexto(flot, f, campo)}
-                            onChange={(e) => flotEscribe(f.d, campo, e.target.value)}
-                            onBlur={() => flotCuadra(b.largo)}
-                            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
-                        ))}
-                        <span>de {b.largo}</span>
-                      </div>
-                    ))}
-                    <p style={{ color: C.mut, fontSize: 12.5, margin: "8px 0 12px" }}>
+                    <p style={{ color: C.mut, fontSize: 12.5, margin: "0 0 12px" }}>
                       {flot.flot.length
-                        ? `${flot.flot.length} flotadores por costado (${flot.flot.length * 2} en la batea) · ` +
-                          `ala ${c1}, entre flotadores ${Math.max(0, c2 - c1 - flot.flot.length)}, medio ${Math.max(0, m - c2)} puntones · ` +
-                          `${fmtN(cap(bp))} puntos de amarre`
+                        ? `Zonas: ala ${c1}, entre flotadores ${Math.max(0, c2 - c1)}, medio ${Math.max(0, m - c2)} puntones`
                         : "Sin flotadores marcados: las zonas se reparten en tres a ojo hasta que los pongas."}
-                      {" · "}Puntos anulados a mano: {flot.sel.size}.
+                      {" · "}{fmtN(flot.sel.size)} puntos anulados · {fmtN(cap(bp))} de amarre.
                     </p>
                   </>
                 );
               })()}
               <Grid b={{ ...b, bloq: {}, flot: flot.flot }} sel={flot.sel} onCell={flotCell} onCells={flotCells}
-                elegible={(k, cat) => !cat} />
+                elegible={() => true} info={loteInfo(b)} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                <button style={btn(true)} onClick={saveFlot}>Guardar flotadores</button>
+                <button style={btn(true)} onClick={saveFlot}>Guardar plano</button>
                 <button style={btn(false)} onClick={() => setFlot(null)}>Cancelar</button>
               </div>
             </div>
@@ -1274,13 +1216,14 @@ function GestionBatea({ db }) {
                 <span style={{ width: 10, height: 10, borderRadius: 2, background: C.libre, display: "inline-block" }} />Libre
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.tabla, border: `1px solid ${C.alero}`, display: "inline-block" }} />Anulada
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: C.tabla, border: `1px solid ${C.alero}`, display: "inline-block" }} />Anulada (flotador, cadena…)
               </span>
             </div>
             <p style={{ color: C.mut, fontSize: 12, margin: "-8px 0 18px", lineHeight: 1.5 }}>
               El plano es el emparrillado visto desde arriba: cada fila es un claro, numerado desde la cadena,
               que va en la primera viga. El eje separa babor de estribor, y dentro de cada medio claro se marcan
-              las zonas del ala, entre flotadores y del medio. Pulsa una cuerda para ver dónde está y de qué lote es.
+              las zonas del ala, entre flotadores y del medio. Pulsa una cuerda para ver dónde está y de qué lote es,
+              y usa Plano para anular los puntos donde no se amarra: los flotadores, la cadena y lo que haga falta.
             </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,460px),1fr))", gap: 16 }}>
@@ -1302,7 +1245,7 @@ function GestionBatea({ db }) {
                           <Field label="Puntones" w={80}><input style={inp} type="number" value={edit.puntones} onChange={(e) => setEdit({ ...edit, puntones: e.target.value })} /></Field>
                           <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                             <button style={btn(true)} onClick={saveEdit}>Guardar</button>
-                            <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Flotadores</button>
+                            <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Plano</button>
                             <button style={btn(false)} onClick={cerrarEdit}>Cancelar</button>
                           </div>
                         </div>
@@ -1315,6 +1258,8 @@ function GestionBatea({ db }) {
                             <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.largo + 1} vigas · {b.ancho} puntones</span>
                             <button onClick={() => abrirEdit(b)}
                               style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Editar</button>
+                            <button onClick={() => abrirFlot(b)}
+                              style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Plano</button>
                             <button onClick={() => { pushHistorial(`Recolocar — ${b.nombre}`); setReub({ bateaId: b.id, sel: new Set(), cat: null }); }}
                               style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Recolocar</button>
                             <button onClick={() => setDelBatea(b.id)}

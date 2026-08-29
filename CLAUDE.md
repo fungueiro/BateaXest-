@@ -50,15 +50,18 @@ En los aleros normalmente no se amarran cuerdas, pero puede hacerse en ciertos m
 Van **longitudinales**, bajo las vigas principales, y son **simétricos**: los mismos
 puntones en los dos costados. Una batea lleva 4 (dos por costado) o 6 (tres).
 
-**Encima de un flotador no se puede amarrar**: esos puntos no están ocupados, es que
-no existen. Pero **el flotador no recorre la batea entera**: cubre un tramo de claros,
-y por delante y por detrás ese mismo puntón sí se amarra. En el plano es un
-**rectángulo**, no una columna.
+**Encima de un flotador no se puede amarrar**, y el flotador **no recorre la batea
+entera**: cubre un tramo de claros, y por delante y por detrás ese mismo puntón sí se
+amarra. En el plano es un rectángulo, no una columna.
 
-Las **zonas, en cambio, son cosa del ancho**: se hablan igual en todos los claros,
-también en los que no tienen flotador debajo. Las marca el flotador proyectado a lo
-ancho — **ala** del alero al primero, **entre flotadores** del primero al último,
-**medio** del último hasta el eje.
+Pero eso **no se describe con números**: se dibuja. El usuario anula puntos de amarre
+sobre el plano y así traza los flotadores, la cadena (que también inutiliza puntones)
+y cualquier otro sitio donde no se pueda atar. Un solo gesto para todo, en `bloq`.
+
+Los flotadores se marcan aparte, por puntón, **solo para las zonas**: no anulan nada
+por su cuenta. Las **zonas son cosa del ancho** — se hablan igual en todos los claros,
+también donde no hay flotador debajo: **ala** del alero al primero, **entre flotadores**
+del primero al último, **medio** del último hasta el eje.
 
 ## Cómo se refleja en el modelo de datos
 
@@ -67,21 +70,19 @@ El objeto batea (`nuevaBatea`) usa claves `"fila-columna"`, que se leen así:
 - **fila = claro**, `0` es el claro pegado a la cadena (el "1er claro" en pantalla)
 - **columna = puntón**, de babor (izquierda) a estribor (derecha)
 - `largo` = nº de claros = **vigas − 1** · `ancho` = nº de puntones
-- `flot: [{ d, c0, c1 }, …]` = un flotador por entrada. `d` es el puntón que cubre
-  contado **desde el alero** (`0` = el pegado a él), aplicado simétricamente a los dos
-  costados; `c0`–`c1` son los claros que abarca (1 = el de la cadena, ambos incluidos).
-  De `d` salen los cortes de zona (`cortes`); de `c0`–`c1`, qué puntos se anulan. Si
-  está vacío, se reparte la media manga en tres para tener algo con lo que hablar.
-  Se admite el formato antiguo (un número suelto = toda la eslora).
-- `bloq[k]` = punto anulado a mano (no confundir con los flotadores, que se anulan solos)
+- `flot: [d, …]` = puntones por los que pasa un flotador, contados **desde el alero**
+  (`0` = el pegado a él) y simétricos en los dos costados. Solo definen los cortes de
+  zona (`cortes`); no anulan nada. Si está vacío, se reparte la media manga en tres.
+- `bloq[k]` = punto anulado, pintado sobre el plano. Es lo que dibuja los flotadores y
+  la cadena, y lo único que resta capacidad. Anular un punto con cuerda la aparta a un
+  hueco de su mismo claro, o a `extra` si no cabe.
 - `extra[cat]` = cuerdas registradas sin sitio en el plano
 
-`cap(b)` descuenta tanto los puntos bajo un flotador como las celdas anuladas a mano,
-sin contar dos veces los que coincidan.
+Helpers de geometría en `index.html`: `mediaManga`, `flotDe`, `esFlot`, `cortes`,
+`ladoCol`, `zonaCol`, `colsDe`, `nombreBloque`, `dondeCelda`.
 
-Helpers de geometría en `index.html`: `mediaManga`, `flotDe`, `colFlot` (el flotador de
-un puntón, para las zonas), `esFlot` / `kFlot` (si ese punto concreto queda debajo, para
-la capacidad), `cortes`, `ladoCol`, `zonaCol`, `colsDe`, `nombreBloque`, `dondeCelda`.
+El panel **Plano** (botón en la tarjeta de la batea) es donde se anulan los puntos y se
+marcan los flotadores.
 
 ## Banco de pruebas
 
