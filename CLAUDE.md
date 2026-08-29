@@ -26,6 +26,7 @@ De abajo arriba:
   babor". Vista en planta con la cadena arriba, babor queda a la izquierda.
 - **Zonas**: dentro de un medio claro, del alero hacia el eje, se distinguen tres
   tramos por referencias físicas, no por número: **ala**, **entre flotadores** y **medio**.
+  No son cortes arbitrarios: **los marcan los propios flotadores**.
 
 Así es como se nombra una cuerda hablando, y así debe leerse el plano:
 
@@ -44,6 +45,16 @@ plano: el límite real es el normativo (500 cuerdas de venta + mexilla, 100 de c
 
 En los aleros normalmente no se amarran cuerdas, pero puede hacerse en ciertos momentos.
 
+### Flotadores
+
+Van **longitudinales**, bajo las vigas principales, y son **simétricos**: los mismos
+puntones en los dos costados. Una batea lleva 4 (dos por costado) o 6 (tres).
+
+**Encima de un flotador no se puede amarrar**, así que esos puntones no tienen puntos
+de amarre — no es que estén ocupados, es que no existen. De ahí salen las tres zonas
+de cada medio claro: **ala** del alero al primer flotador, **entre flotadores** entre
+el primero y el último, y **medio** del último hasta el eje.
+
 ## Cómo se refleja en el modelo de datos
 
 El objeto batea (`nuevaBatea`) usa claves `"fila-columna"`, que se leen así:
@@ -51,14 +62,25 @@ El objeto batea (`nuevaBatea`) usa claves `"fila-columna"`, que se leen así:
 - **fila = claro**, `0` es el claro pegado a la cadena (el "1er claro" en pantalla)
 - **columna = puntón**, de babor (izquierda) a estribor (derecha)
 - `largo` = nº de claros = **vigas − 1** · `ancho` = nº de puntones
-- `zc: [c1, c2]` = cortes de zona, en puntones desde el alero: `ala` ocupa los `c1`
-  primeros, `entre flotadores` hasta `c2`, y `medio` el resto hasta el eje. Es opcional;
-  si falta, se reparte la media manga en tres.
-- `bloq[k]` = celda anulada (queda sobre un flotador o similar); resta capacidad
+- `flot: [d, …]` = puntones por los que pasa un flotador, contados **desde el alero**
+  (`0` = el pegado a él) y aplicados simétricamente a los dos costados. De aquí salen
+  los cortes de zona (`cortes`). Si está vacío, se reparte la media manga en tres para
+  tener algo con lo que hablar hasta que se marquen.
+- `bloq[k]` = punto anulado a mano (no confundir con los flotadores, que se anulan solos)
 - `extra[cat]` = cuerdas registradas sin sitio en el plano
 
-Helpers de geometría en `index.html`: `mediaManga`, `cortes`, `ladoCol`, `zonaCol`,
-`colsDe`, `nombreBloque`, `dondeCelda`.
+`cap(b)` descuenta tanto los puntones de flotador como las celdas anuladas a mano.
+
+Helpers de geometría en `index.html`: `mediaManga`, `flotDe`, `esFlot`, `cortes`,
+`ladoCol`, `zonaCol`, `colsDe`, `nombreBloque`, `dondeCelda`.
+
+## Banco de pruebas
+
+`banco.jsx` + `banco.shell.html` (en el scratchpad de la sesión) montan la rejilla real
+fuera de la app, sin Firebase, y se publican como artifact. El JSX **se compila antes**
+y React va embebido: los artefactos publicados no permiten `eval` ni cargaron los
+scripts del CDN. `build.js` lo arma y `browser.js` / `flotest.js` lo verifican en
+Chromium.
 
 ## Pendiente (fase 2)
 

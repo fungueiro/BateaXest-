@@ -37,7 +37,7 @@ const C = {
   sel: "#F2D48A",
   // Plano: la celda libre tiene que verse sobre el panel, y la madera del
   // emparrillado (vigas, aleros, eje) leerse como estructura, no como adorno.
-  libre: "#456A7C", viga: "#2C4E60", alero: "#7C97A7", tabla: "#0D1F28",
+  libre: "#456A7C", viga: "#2C4E60", alero: "#7C97A7", tabla: "#0D1F28", flota: "#1B3A48",
 };
 const CAT = {
   colectora: { label: "Colectora", color: C.rope },
@@ -65,7 +65,11 @@ const descargarCSV = (nombre, headers, rows) => {
 const nuevaBatea = (id, nombre, ancho, largo) => ({
   id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, extra: { colectora: 0, desdoble: 0, venta: 0 },
 });
-const cap = (b) => b.ancho * b.largo - Object.keys(b.bloq || {}).length;
+// Los puntones que van sobre un flotador no dan puntos de amarre, igual que las
+// celdas anuladas a mano. Se cuentan una sola vez si coinciden.
+const colsFlot = (b) => { let n = 0; for (let c = 0; c < b.ancho; c++) if (esFlot(b, c)) n++; return n; };
+const cap = (b) => b.ancho * b.largo - colsFlot(b) * b.largo
+  - Object.keys(b.bloq || {}).filter((k) => !esFlot(b, +k.split("-")[1])).length;
 const nCeldas = (b, cat) => Object.values(b.celdas).filter((c) => !cat || c === cat).length;
 const stock = (b, cat) => nCeldas(b, cat) + b.extra[cat];
 const ocup = (b) => nCeldas(b) + CATS.reduce((s, c) => s + b.extra[c], 0);
@@ -203,16 +207,22 @@ const rotuloZona = (zona, ancho) => {
 const LADOS = ["babor", "estribor"];
 const ord = (n) => (n === 1 ? "1er" : n === 3 ? "3er" : `${n}º`);
 const mediaManga = (b) => Math.max(1, Math.floor(b.ancho / 2));
-// Cortes de zona, en puntones contados desde el alero: "ala" ocupa los c1
-// primeros y "entre flotadores" llega hasta c2; el resto, hasta el eje, es "medio".
-const cortes = (b) => {
-  const m = mediaManga(b);
-  const c1 = Math.min(Math.max(1, b.zc?.[0] ?? Math.max(1, Math.round(m / 3))), m);
-  const c2 = Math.min(Math.max(c1, b.zc?.[1] ?? Math.max(2, Math.round((2 * m) / 3))), m);
-  return [c1, c2];
-};
 const ladoCol = (b, c) => (c < mediaManga(b) ? "babor" : "estribor");
 const dAlero = (b, c) => (c < mediaManga(b) ? c : b.ancho - 1 - c); // puntones hasta su alero
+// Los flotadores van longitudinales, bajo las vigas principales, y son simétricos:
+// se guardan como los puntones que cubren en un costado, contados desde el alero
+// (0 = el puntón pegado a él), y se reflejan en el otro. Encima de un flotador no
+// se puede amarrar, así que esos puntones no tienen puntos de amarre.
+const flotDe = (b) => [...new Set(b.flot || [])]
+  .filter((d) => Number.isInteger(d) && d >= 0 && d < mediaManga(b)).sort((x, y) => x - y);
+const esFlot = (b, c) => flotDe(b).includes(dAlero(b, c));
+// Cortes de zona: los marcan los propios flotadores. Sin flotadores definidos
+// todavía, se reparte la media manga en tres para tener algo con lo que hablar.
+const cortes = (b) => {
+  const m = mediaManga(b), f = flotDe(b);
+  if (!f.length) return [Math.min(Math.max(1, Math.round(m / 3)), m), Math.min(Math.max(2, Math.round((2 * m) / 3)), m)];
+  return [f[0], Math.min(f[f.length - 1] + 1, m)];
+};
 const zonaCol = (b, c) => { const [c1, c2] = cortes(b), d = dAlero(b, c); return d < c1 ? "ala" : d < c2 ? "entre" : "medio"; };
 const colsDe = (b, lado, zona) => {
   const cs = [];
@@ -269,6 +279,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
   const okK = (k) => {
     const cat = b.celdas[k], blq = b.bloq?.[k];
+    if (esFlot(b, +k.split("-")[1])) return false;
     return !!onCell && !blq && (!elegible || elegible(k, cat, blq));
   };
   // Claves que abarca una pulsación, según la granularidad activa
@@ -297,6 +308,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
   const texto = (k) => {
     const donde = dondeCelda(b, k), cat = b.celdas[k];
+    if (esFlot(b, +k.split("-")[1])) return `${donde} · flotador`;
     if (b.bloq?.[k]) return `${donde} · anulada`;
     if (!cat) return `${donde} · libre`;
     return `${donde} · ${info ? info(k, cat) : CAT[cat].label}`;
@@ -345,9 +357,16 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
 
             <rect x={GUT} y={HEAD} width={cel * b.ancho} height={cel * b.largo} fill={C.tabla} />
 
+            {/* Flotadores: van por debajo, a lo largo de toda la batea */}
+            {Array.from({ length: b.ancho }, (_, c) => esFlot(b, c) && (
+              <rect key={"f" + c} x={px(c)} y={HEAD} width={cel} height={cel * b.largo}
+                fill={C.flota} stroke={C.viga} strokeWidth={0.8} pointerEvents="none" />
+            ))}
+
             {/* Cuerdas */}
             {Array.from({ length: b.largo }, (_, r) =>
               Array.from({ length: b.ancho }, (_, c) => {
+                if (esFlot(b, c)) return null;
                 const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
                 const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
                 const ok = elegible ? elegible(k, cat, blq) : false;
@@ -369,7 +388,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
             {/* Aspa en las celdas anuladas: se distinguen por forma, no solo por color */}
             {Object.keys(b.bloq || {}).map((k) => {
               const [r, c] = k.split("-").map(Number);
-              if (r >= b.largo || c >= b.ancho) return null;
+              if (r >= b.largo || c >= b.ancho || esFlot(b, c)) return null;
               const m = Math.max(1, cel * 0.14) + 1.5;
               return <line key={"x" + k} x1={px(c) + m} y1={py(r) + m} x2={px(c) + cel - m} y2={py(r) + cel - m}
                 stroke={C.alero} strokeWidth={1.1} opacity={0.7} pointerEvents="none" />;
@@ -602,15 +621,14 @@ function GestionBatea({ db }) {
   };
 
   // ── Edición de batea ──
-  const [edit, setEdit] = useState(null); // {id, nombre, vigas, puntones, ala, entre}
+  const [edit, setEdit] = useState(null); // {id, nombre, vigas, puntones}
   // Refs a la tarjeta de cada batea para poder llevar la pantalla al formulario de edición.
   const cardRefs = useRef({});
   // Al pulsar "Editar" el formulario sustituye a la cabecera de la tarjeta, que puede quedar
   // fuera de pantalla si la lista está desplazada. Subimos hasta ella para que se vea.
   const abrirEdit = (b) => {
     setDelBatea(null);
-    const [c1, c2] = cortes(b);
-    setEdit({ id: b.id, nombre: b.nombre, vigas: b.largo + 1, puntones: b.ancho, ala: c1, entre: c2 - c1 });
+    setEdit({ id: b.id, nombre: b.nombre, vigas: b.largo + 1, puntones: b.ancho });
     requestAnimationFrame(() => cardRefs.current[b.id]?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
   const cerrarEdit = () => { setEdit(null); setDelBatea(null); };
@@ -619,11 +637,13 @@ function GestionBatea({ db }) {
     const a = parseInt(edit.puntones), v = parseInt(edit.vigas), l = v - 1;
     if (!edit.nombre || !a || !v) return flash("Nombre, vigas y puntones requeridos.");
     if (v < 2) return flash("Una batea necesita al menos 2 vigas (1 claro).");
-    const ala = Math.max(1, parseInt(edit.ala) || 1), entre = Math.max(0, parseInt(edit.entre) || 0);
     pushHistorial(`Editar batea "${edit.nombre}"`);
     setBateas(bateas.map((b) => {
       if (b.id !== edit.id) return b;
-      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, zc: [ala, ala + entre], celdas: {}, lotes: {}, bloq: {}, extra: { ...b.extra } };
+      // Los flotadores se guardan en puntones desde el alero: si la batea se estrecha,
+      // los que ya no caben desaparecen y hay que volver a marcarlos.
+      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {},
+        flot: (b.flot || []).filter((d) => d < Math.max(1, Math.floor(a / 2))), extra: { ...b.extra } };
       let fuera = 0, flotFuera = 0;
       for (const [k, cat] of Object.entries(b.celdas)) {
         const [r, c] = k.split("-").map(Number);
@@ -649,7 +669,12 @@ function GestionBatea({ db }) {
 
   // ── Flotadores (celdas anuladas permanentemente) ──
   const [flot, setFlot] = useState(null); // { bateaId, sel:Set }
-  const abrirFlot = (b) => setFlot({ bateaId: b.id, sel: new Set(Object.keys(b.bloq || {})) });
+  const abrirFlot = (b) => setFlot({ bateaId: b.id, sel: new Set(Object.keys(b.bloq || {})), flot: flotDe(b) });
+  // Poner o quitar un flotador: es un puntón contado desde el alero, y va simétrico
+  // en los dos costados.
+  const toggleFlot = (d) => setFlot((f) => ({
+    ...f, flot: f.flot.includes(d) ? f.flot.filter((x) => x !== d) : [...f.flot, d].sort((a, c) => a - c),
+  }));
 
   // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
   const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
@@ -729,9 +754,31 @@ function GestionBatea({ db }) {
   });
   const saveFlot = () => {
     pushHistorial(`Flotadores — ${bn(flot.bateaId)}`);
-    setBateas(bateas.map((b) => b.id === flot.bateaId
-      ? { ...b, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])) } : b));
+    let aviso = "";
+    setBateas(bateas.map((b0) => {
+      if (b0.id !== flot.bateaId) return b0;
+      const b = { ...b0, flot: flot.flot, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])),
+        celdas: { ...b0.celdas }, lotes: { ...b0.lotes }, extra: { ...b0.extra } };
+      // Encima de un flotador no puede quedar ninguna cuerda: se buscan sitio en su
+      // mismo claro y, si no lo hay, pasan a "sin ubicar" para recolocarlas a mano.
+      const libre = (k) => !b.celdas[k] && !b.bloq[k] && !esFlot(b, +k.split("-")[1]);
+      let movidas = 0, sinSitio = 0;
+      for (const k of Object.keys(b0.celdas)) {
+        const [r, c] = k.split("-").map(Number);
+        if (!esFlot(b, c)) continue;
+        const cat = b.celdas[k], lote = b.lotes[k];
+        delete b.celdas[k]; delete b.lotes[k];
+        let hueco = null;
+        for (let x = 0; x < b.ancho && !hueco; x++) if (libre(`${r}-${x}`)) hueco = `${r}-${x}`;
+        if (hueco) { b.celdas[hueco] = cat; if (lote != null) b.lotes[hueco] = lote; movidas++; }
+        else { b.extra[cat]++; sinSitio++; }
+      }
+      if (movidas || sinSitio) aviso = `${b.nombre}: ${movidas ? movidas + " cuerdas movidas a su mismo claro" : ""}` +
+        `${movidas && sinSitio ? " · " : ""}${sinSitio ? sinSitio + " sin ubicar (usa Recolocar)" : ""}.`;
+      return b;
+    }));
     setFlot(null);
+    if (aviso) flash(aviso);
   };
 
   // ── Alta de batea ──
@@ -1074,9 +1121,41 @@ function GestionBatea({ db }) {
                 Flotadores — {b.nombre}
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
-                Marca los puntos que quedan anulados —sobre un flotador o donde no se puede amarrar—: no cuentan como capacidad. Marcados: {flot.sel.size}.
+                Los flotadores van longitudinales por debajo, y son simétricos: marca por qué puntones
+                pasan contando desde el alero. Encima de un flotador no se amarra, así que esos puntones
+                se quedan sin puntos de amarre — y son ellos los que marcan dónde acaba el ala y dónde
+                empieza el medio.
               </p>
-              <Grid b={{ ...b, bloq: {} }} sel={flot.sel} onCell={flotCell} onCells={flotCells}
+              {(() => {
+                const bp = { ...b, flot: flot.flot };
+                const m = mediaManga(bp), [c1, c2] = cortes(bp);
+                return (
+                  <>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+                      {Array.from({ length: m }, (_, d) => {
+                        const puesto = flot.flot.includes(d);
+                        return (
+                          <button key={d} onClick={() => toggleFlot(d)}
+                            aria-pressed={puesto}
+                            title={`Puntón ${d + 1} desde el alero`}
+                            style={{ ...mini(puesto ? C.sel : null), minWidth: 30,
+                              background: puesto ? C.flota : "transparent", fontWeight: puesto ? 700 : 400 }}>
+                            {d + 1}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p style={{ color: C.mut, fontSize: 12.5, margin: "0 0 12px" }}>
+                      {flot.flot.length
+                        ? `${flot.flot.length} flotadores por costado (${flot.flot.length * 2} en la batea) · ` +
+                          `ala ${c1}, entre flotadores ${Math.max(0, c2 - c1 - flot.flot.length)}, medio ${Math.max(0, m - c2)} puntones de amarre`
+                        : "Sin flotadores marcados: las zonas se reparten en tres a ojo hasta que los pongas."}
+                      {" · "}Puntos anulados a mano: {flot.sel.size}.
+                    </p>
+                  </>
+                );
+              })()}
+              <Grid b={{ ...b, bloq: {}, flot: flot.flot }} sel={flot.sel} onCell={flotCell} onCells={flotCells}
                 elegible={(k, cat) => !cat} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={saveFlot}>Guardar flotadores</button>
@@ -1160,8 +1239,6 @@ function GestionBatea({ db }) {
                           <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
                           <Field label="Vigas" w={70}><input style={inp} type="number" value={edit.vigas} onChange={(e) => setEdit({ ...edit, vigas: e.target.value })} /></Field>
                           <Field label="Puntones" w={80}><input style={inp} type="number" value={edit.puntones} onChange={(e) => setEdit({ ...edit, puntones: e.target.value })} /></Field>
-                          <Field label="Ala" w={64}><input style={inp} type="number" value={edit.ala} onChange={(e) => setEdit({ ...edit, ala: e.target.value })} /></Field>
-                          <Field label="Entre flot." w={80}><input style={inp} type="number" value={edit.entre} onChange={(e) => setEdit({ ...edit, entre: e.target.value })} /></Field>
                           <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                             <button style={btn(true)} onClick={saveEdit}>Guardar</button>
                             <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Flotadores</button>
@@ -1219,7 +1296,7 @@ function GestionBatea({ db }) {
 
               <div style={{ background: C.panel2, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 10, justifyContent: "center" }}>
                 <Field label="Nueva batea"><input style={inp} placeholder="Nombre" value={nb.nombre} onChange={(e) => setNb({ ...nb, nombre: e.target.value })} /></Field>
-                <p style={{ color: C.mut, fontSize: 12, margin: 0 }}>Los claros salen de las vigas: 26 vigas dejan 25 claros. Las zonas (ala, entre flotadores, medio) se ajustan luego en Editar.</p>
+                <p style={{ color: C.mut, fontSize: 12, margin: 0 }}>Los claros salen de las vigas: 26 vigas dejan 25 claros. Después podrás marcar por dónde pasan los flotadores, que son los que definen las zonas.</p>
                 <div style={{ display: "flex", gap: 8 }}>
                   <Field label="Vigas"><input style={inp} type="number" placeholder="26" value={nb.vigas} onChange={(e) => setNb({ ...nb, vigas: e.target.value })} /></Field>
                   <Field label="Puntones"><input style={inp} type="number" placeholder="20" value={nb.puntones} onChange={(e) => setNb({ ...nb, puntones: e.target.value })} /></Field>
