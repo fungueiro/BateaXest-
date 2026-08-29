@@ -226,7 +226,7 @@ const dondeCelda = (b, k) => { const [r, c] = k.split("-").map(Number); return n
 // La selección va por bloque (medio claro × zona), que es como se trabaja de
 // verdad; "cuerda" queda como modo fino para retoques.
 function Grid({ b, sel, onCell, onCells, elegible, info }) {
-  const GUT = 26, HEAD = 34, FOOT = 16, MIN_CELL = 14;
+  const GUT = 20, HEAD = 34, FOOT = 16, MIN_CELL = 13;
   const wrap = useRef(null);
   const ultimo = useRef(null); // último bloque pintado durante un arrastre
   const [dispW, setDispW] = useState(0);
@@ -381,8 +381,9 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
                 stroke={r === 0 ? C.alero : C.viga} strokeWidth={r === 0 ? 2.5 : 1} />
             ))}
             {/* Aleros: cierran el perímetro por los dos costados */}
-            <line x1={GUT} y1={HEAD} x2={GUT} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
-            <line x1={gw} y1={HEAD} x2={gw} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
+            {/* Metidos media pincelada hacia dentro: en el filo del dibujo se recortarían por la mitad */}
+            <line x1={GUT + 1.25} y1={HEAD} x2={GUT + 1.25} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
+            <line x1={gw - 1.25} y1={HEAD} x2={gw - 1.25} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
             {/* Cortes de zona */}
             {LADOS.map((lado) => ZONAS.map((zona) => {
               const cs = colsDe(b, lado, zona);
