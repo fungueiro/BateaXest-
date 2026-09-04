@@ -36,12 +36,21 @@ Así es como se nombra una cuerda hablando, y así debe leerse el plano:
 **Nadie dice "puntón 12".** El eje de puntones no se numera en pantalla: se rotula con
 sus referencias (ala, entre flotadores, medio) y con los aleros como borde.
 
-### Densidad: un punto de amarre NO es una cuerda
+### Dos cuerdas por puntón: proa y popa
 
-De un mismo punto de un puntón cuelgan **normalmente dos cuerdas**, a veces una, y a
-veces muchas amontonadas cuando no hay sitio, para **rarearlas** (repartirlas) más
-adelante. La capacidad física de la batea no es, por tanto, el número de celdas del
-plano: el límite real es el normativo (500 cuerdas de venta + mexilla, 100 de colectora).
+En cada claro se amarran **normalmente dos cuerdas por puntón**: una junto a la viga de
+**proa** del claro y otra junto a la de **popa**. No es una cantidad, son **dos sitios
+distintos** — y a veces se completa solo uno de los dos, así que hay que poder trabajar
+"medio claro" también en este sentido:
+
+> "las cuerdas a levantar están en el claro dos y medio del tres de estribor"
+
+Los claros se van llenando de proa a popa o al revés. La capacidad física de la batea no
+es, por tanto, el número de claros por puntones: es el doble, y el límite real es el
+normativo (500 cuerdas de venta + mexilla, 100 de colectora).
+
+Queda fuera del modelo el caso excepcional de amontonar más de dos en un punto para
+**rarearlas** (repartirlas) más adelante; eso hoy cae en `extra`.
 
 En los aleros normalmente no se amarran cuerdas, pero puede hacerse en ciertos momentos.
 
@@ -65,10 +74,11 @@ del primero al último, **medio** del último hasta el eje.
 
 ## Cómo se refleja en el modelo de datos
 
-El objeto batea (`nuevaBatea`) usa claves `"fila-columna"`, que se leen así:
+El objeto batea (`nuevaBatea`) usa claves `"claro-puntón-mitad"`, que se leen así:
 
-- **fila = claro**, `0` es el claro pegado a la cadena (el "1er claro" en pantalla)
-- **columna = puntón**, de babor (izquierda) a estribor (derecha)
+- **claro**, `0` es el pegado a la cadena (el "1er claro" en pantalla)
+- **puntón**, de babor (izquierda) a estribor (derecha)
+- **mitad**, `0` = la cuerda de proa del claro, `1` = la de popa
 - `largo` = nº de claros = **vigas − 1** · `ancho` = nº de puntones
 - `flot: [d, …]` = puntones por los que pasa un flotador, contados **desde el alero**
   (`0` = el pegado a él) y simétricos en los dos costados. Solo definen los cortes de
@@ -78,8 +88,17 @@ El objeto batea (`nuevaBatea`) usa claves `"fila-columna"`, que se leen así:
   hueco de su mismo claro, o a `extra` si no cabe.
 - `extra[cat]` = cuerdas registradas sin sitio en el plano
 
-Helpers de geometría en `index.html`: `mediaManga`, `flotDe`, `esFlot`, `cortes`,
-`ladoCol`, `zonaCol`, `colsDe`, `nombreBloque`, `dondeCelda`.
+`cap(b)` = `ancho × largo × 2 − puntos anulados`.
+
+Las claves del formato anterior (`"claro-puntón"`, una cuerda por punto) se migran al
+cargar con `migraBatea`: se leen como la cuerda de **proa**.
+
+Helpers de geometría en `index.html`: `kCelda` / `leeK` (construir y leer claves),
+`mediaManga`, `flotDe`, `esFlot`, `cortes`, `ladoCol`, `zonaCol`, `colsDe`,
+`nombreBloque`, `dondeCelda`, `migraBatea`.
+
+En el plano, la selección por zona se puede acotar a **las dos** cuerdas, solo **proa**
+o solo **popa**.
 
 El panel **Plano** (botón en la tarjeta de la batea) es donde se anulan los puntos y se
 marcan los flotadores.
@@ -92,13 +111,11 @@ y React va embebido: los artefactos publicados no permiten `eval` ni cargaron lo
 scripts del CDN. `build.js` lo arma y `browser.js` / `flotest.js` lo verifican en
 Chromium.
 
-## Pendiente (fase 2)
+## Pendiente
 
-- **Densidad por celda**: hoy una celda es una cuerda (`celdas[k] = categoría`). Debe
-  pasar a llevar cantidad, porque lo normal son dos cuerdas por punto.
-- **Rarear** como operación de primera clase.
-- Con densidad variable, `extra` ("cuerdas sin ubicar") pierde casi todo su sentido:
-  era un parche a un límite físico que en realidad no existe.
+- **Rarear** como operación de primera clase (repartir cuerdas amontonadas).
+- `extra` ("cuerdas sin ubicar") pierde casi todo su sentido ahora que el plano tiene el
+  doble de sitio: era un parche a un límite físico que en realidad no existe.
 - Rendimiento: `Grid` no está memoizado y `loteInfo(b)` crea una función nueva en cada
   render; cada celda pintada reescribe el documento entero de Firestore.
 

@@ -65,8 +65,9 @@ const descargarCSV = (nombre, headers, rows) => {
 const nuevaBatea = (id, nombre, ancho, largo) => ({
   id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, extra: { colectora: 0, desdoble: 0, venta: 0 },
 });
-// Los puntos anulados a mano (flotador, cadena, lo que sea) no son capacidad.
-const cap = (b) => b.ancho * b.largo - Object.keys(b.bloq || {}).length;
+// Dos cuerdas por puntón en cada claro —la de proa y la de popa—, menos los puntos
+// anulados a mano (flotador, cadena, lo que sea).
+const cap = (b) => b.ancho * b.largo * 2 - Object.keys(b.bloq || {}).length;
 const nCeldas = (b, cat) => Object.values(b.celdas).filter((c) => !cat || c === cat).length;
 const stock = (b, cat) => nCeldas(b, cat) + b.extra[cat];
 const ocup = (b) => nCeldas(b) + CATS.reduce((s, c) => s + b.extra[c], 0);
@@ -110,7 +111,9 @@ const mensajeErrorAuth = (code) => ({
 function seed(id, nombre, fill) {
   const b = nuevaBatea(id, nombre, 20, 25);
   let i = 0;
-  for (const [cat, n] of fill) for (let k = 0; k < n; k++, i++) b.celdas[`${Math.floor(i / b.ancho)}-${i % b.ancho}`] = cat;
+  const por = b.ancho * 2;
+  for (const [cat, n] of fill) for (let k = 0; k < n; k++, i++)
+    b.celdas[`${Math.floor(i / por)}-${Math.floor((i % por) / 2)}-${i % 2}`] = cat;
   return b;
 }
 const seedBateas = [
@@ -187,11 +190,14 @@ const BarChart = ({ data, valueKey, color }) => {
 // ─── Geometría de la batea ────────────────────────────────────────────────
 // El plano ES el emparrillado. Cada fila es un CLARO (hueco entre dos vigas),
 // numerado desde la cadena de fondeo, que va siempre en la primera viga. Cada
-// columna es un PUNTÓN, donde se amarran las cuerdas. El eje parte cada claro
-// en dos MEDIOS CLAROS —babor a la izquierda, estribor a la derecha— y cada
-// medio claro se divide, del alero hacia el eje, en tres ZONAS: ala, entre
-// flotadores y medio. Así es como se nombra una cuerda hablando en la batea:
-// "3er claro de estribor, entre flotadores". Los puntones no se numeran.
+// columna es un PUNTÓN. En cada claro se amarran normalmente DOS cuerdas por
+// puntón: una junto a la viga de proa del claro y otra junto a la de popa, y a
+// veces se completa solo una de las dos. Por eso cada punto del plano es
+// "claro-puntón-mitad", con mitad 0 = proa y 1 = popa.
+// El eje parte cada claro en dos MEDIOS CLAROS —babor a la izquierda, estribor
+// a la derecha— y cada uno se divide, del alero hacia el eje, en tres ZONAS:
+// ala, entre flotadores y medio. Así se nombra una cuerda hablando en la batea:
+// "3er claro de estribor, entre flotadores, popa". Los puntones no se numeran.
 const ZONAS = ["ala", "entre", "medio"];
 const ZONA_LABEL = { ala: "Ala", entre: "Entre flotadores", medio: "Medio" };
 const ZONA_CORTA = { ala: "ala", entre: "entre flot.", medio: "medio" };
@@ -202,7 +208,11 @@ const rotuloZona = (zona, ancho) => {
   return null;
 };
 const LADOS = ["babor", "estribor"];
+const MITADES = [0, 1];
+const MITAD_LABEL = ["proa", "popa"];
 const ord = (n) => (n === 1 ? "1er" : n === 3 ? "3er" : `${n}º`);
+const kCelda = (r, c, h) => `${r}-${c}-${h}`;
+const leeK = (k) => { const p = k.split("-"); return { r: +p[0], c: +p[1], h: +p[2] || 0 }; };
 const mediaManga = (b) => Math.max(1, Math.floor(b.ancho / 2));
 const ladoCol = (b, c) => (c < mediaManga(b) ? "babor" : "estribor");
 const dAlero = (b, c) => (c < mediaManga(b) ? c : b.ancho - 1 - c); // puntones hasta su alero
@@ -229,17 +239,33 @@ const colsDe = (b, lado, zona) => {
   return cs;
 };
 const nombreBloque = (claro, lado, zona) => `${ord(claro)} claro de ${lado} · ${ZONA_LABEL[zona]}`;
-const dondeCelda = (b, k) => { const [r, c] = k.split("-").map(Number); return nombreBloque(r + 1, ladoCol(b, c), zonaCol(b, c)); };
+const dondeCelda = (b, k) => {
+  const { r, c, h } = leeK(k);
+  return `${nombreBloque(r + 1, ladoCol(b, c), zonaCol(b, c))} · ${MITAD_LABEL[h]}`;
+};
+// Antes cada punto del plano era una cuerda suelta; ahora cada claro tiene dos por
+// puntón. Las claves viejas "claro-puntón" se leen como la cuerda de proa.
+const migraClaves = (o) => {
+  const r = {};
+  for (const [k, v] of Object.entries(o || {})) r[k.split("-").length === 2 ? `${k}-0` : k] = v;
+  return r;
+};
+const migraBatea = (b) => ({
+  ...b, celdas: migraClaves(b.celdas), lotes: migraClaves(b.lotes), bloq: migraClaves(b.bloq),
+  flot: (b.flot || []).map((f) => (typeof f === "number" ? f : f?.d)).filter((d) => Number.isInteger(d)),
+});
 
 // ─── Plano de la batea ────────────────────────────────────────────────────
 // La selección va por bloque (medio claro × zona), que es como se trabaja de
-// verdad; "cuerda" queda como modo fino para retoques.
+// verdad, y se puede acotar a las cuerdas de proa o a las de popa. "Cuerda"
+// queda como modo fino para retoques.
 function Grid({ b, sel, onCell, onCells, elegible, info }) {
-  const GUT = 20, HEAD = 34, FOOT = 16, MIN_CELL = 13;
+  const GUT = 20, HEAD = 34, FOOT = 16, MIN_CELL = 13, ALTO = 1.7; // alto del claro, en anchos de puntón
   const wrap = useRef(null);
   const ultimo = useRef(null); // último bloque pintado durante un arrastre
   const [dispW, setDispW] = useState(0);
   const [gran, setGran] = useState("zona"); // "zona" | "cuerda"
+  const [mitad, setMitad] = useState("ambas"); // "ambas" | 0 | 1
   const [drag, setDrag] = useState(null);
   const [tip, setTip] = useState(null);
   // El ancho real del contenedor manda: es lo único que garantiza que la celda
@@ -271,25 +297,32 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   }, [b]);
 
   const cel = Math.max(MIN_CELL, (dispW - GUT) / b.ancho);
-  const gw = GUT + cel * b.ancho, gh = HEAD + cel * b.largo + FOOT;
+  const alto = cel * ALTO; // alto de un claro entero, con sus dos cuerdas
+  const gw = GUT + cel * b.ancho, gh = HEAD + alto * b.largo + FOOT;
   const scroll = dispW > 0 && gw > dispW + 0.5;
   const xEje = GUT + mediaManga(b) * cel;
-  const px = (c) => GUT + c * cel, py = (r) => HEAD + r * cel;
+  const px = (c) => GUT + c * cel, py = (r) => HEAD + r * alto;
+  // Las dos cuerdas se dibujan pegadas a su viga: juntas dentro del claro y
+  // separadas del claro siguiente, para que se lean como pareja.
+  const mx = cel * 0.14, my = alto * 0.16, sep = cel * 0.1;
+  const hs = Math.max(2, (alto - 2 * my - sep) / 2); // alto de cada cuerda
+  const yCuerda = (r, h) => py(r) + my + h * (hs + sep);
 
   const okK = (k) => {
     const cat = b.celdas[k], blq = b.bloq?.[k];
     return !!onCell && !blq && (!elegible || elegible(k, cat, blq));
   };
-  // Claves que abarca una pulsación, según la granularidad activa
+  // Claves que abarca una pulsación, según la granularidad y la mitad activas
   const claves = (k) => {
     if (gran === "cuerda") return okK(k) ? [k] : [];
-    const [r, c] = k.split("-").map(Number);
-    return colsDe(b, ladoCol(b, c), zonaCol(b, c)).map((x) => `${r}-${x}`).filter(okK);
+    const { r, c } = leeK(k), hs2 = mitad === "ambas" ? MITADES : [mitad];
+    return colsDe(b, ladoCol(b, c), zonaCol(b, c))
+      .flatMap((x) => hs2.map((h) => kCelda(r, x, h))).filter(okK);
   };
   const idBloque = (k) => {
     if (gran === "cuerda") return k;
-    const [r, c] = k.split("-").map(Number);
-    return `${r}|${ladoCol(b, c)}|${zonaCol(b, c)}`;
+    const { r, c } = leeK(k);
+    return `${r}|${ladoCol(b, c)}|${zonaCol(b, c)}|${mitad}`;
   };
   const pintar = (k, forzado) => {
     if (!onCell) return;
@@ -310,10 +343,12 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     if (!cat) return `${donde} · libre`;
     return `${donde} · ${info ? info(k, cat) : CAT[cat].label}`;
   };
+  const anchoTip = Math.min(230, Math.max(60, gw - 10));
   const verTip = (k) => {
-    const [r, c] = k.split("-").map(Number);
-    const lim = Math.min(70, gw / 2);
-    setTip({ x: Math.min(Math.max(px(c) + cel / 2, lim), gw - lim), y: py(r), txt: texto(k) });
+    // La ficha se centra en la cuerda pero sin salirse del dibujo: con la dirección
+    // completa más el lote, el texto es largo y se recortaba por el borde.
+    const { r, c, h } = leeK(k), lim = anchoTip / 2 + 4;
+    setTip({ x: Math.min(Math.max(px(c) + cel / 2, lim), gw - lim), y: yCuerda(r, h), txt: texto(k) });
   };
   // En táctil no hay hover: la pulsación es la única vía a la ficha de la cuerda.
   const kTouch = (e) => {
@@ -330,14 +365,26 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     const k = kTouch(e);
     if (k) pintar(k, drag);
   };
+  const chip = (activo, rot, alPulsar) => (
+    <button key={rot} style={{ ...mini(activo ? C.sel : null), fontWeight: activo ? 700 : 400 }}
+      aria-pressed={activo} onClick={alPulsar}>{rot}</button>
+  );
 
   return (
     <div ref={wrap} style={{ width: "100%" }}>
       {onCell && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12, color: C.mut, flexWrap: "wrap" }}>
           <span>Seleccionar por</span>
-          <button style={mini(gran === "zona" ? C.sel : null)} onClick={() => setGran("zona")}>zona</button>
-          <button style={mini(gran === "cuerda" ? C.sel : null)} onClick={() => setGran("cuerda")}>cuerda</button>
+          {chip(gran === "zona", "zona", () => setGran("zona"))}
+          {chip(gran === "cuerda", "cuerda", () => setGran("cuerda"))}
+          {gran === "zona" && (
+            <>
+              <span style={{ marginLeft: 4 }}>cuerdas</span>
+              {chip(mitad === "ambas", "las dos", () => setMitad("ambas"))}
+              {chip(mitad === 0, "proa", () => setMitad(0))}
+              {chip(mitad === 1, "popa", () => setMitad(1))}
+            </>
+          )}
         </div>
       )}
       <div style={{ overflowX: scroll ? "auto" : "visible", overflowY: scroll ? "hidden" : "visible", WebkitOverflowScrolling: "touch" }}>
@@ -345,42 +392,46 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
           {tip && (
             <div style={{ position: "absolute", left: tip.x, top: tip.y, transform: "translate(-50%,-115%)",
               background: "#04121A", color: C.text, border: `1px solid ${C.alero}`, borderRadius: 6,
-              padding: "4px 8px", fontSize: 12, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>
+              padding: "4px 8px", fontSize: 12, lineHeight: 1.35, maxWidth: anchoTip, width: "max-content",
+              boxSizing: "border-box", // sin esto, el relleno se suma al máximo y la ficha se sale
+              pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>
           )}
           <svg width={gw} height={gh}
             style={{ display: "block", userSelect: "none", touchAction: onCell ? "none" : "auto" }}
             onMouseUp={soltar} onMouseLeave={() => { soltar(); setTip(null); }}
             onTouchStart={onTS} onTouchMove={onTM} onTouchEnd={soltar} onTouchCancel={soltar}>
 
-            <rect x={GUT} y={HEAD} width={cel * b.ancho} height={cel * b.largo} fill={C.tabla} />
+            <rect x={GUT} y={HEAD} width={cel * b.ancho} height={alto * b.largo} fill={C.tabla} />
 
-            {/* Cuerdas */}
+            {/* Cuerdas: dos por puntón en cada claro, la de proa y la de popa */}
             {Array.from({ length: b.largo }, (_, r) =>
-              Array.from({ length: b.ancho }, (_, c) => {
-                const k = `${r}-${c}`, cat = b.celdas[k], blq = b.bloq?.[k];
-                const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
-                const ok = elegible ? elegible(k, cat, blq) : false;
-                const isSel = sel?.has(k);
-                const m = Math.max(1, cel * 0.14), s = cel - 2 * m;
-                return (
-                  <rect key={k} data-k={k} x={px(c) + m} y={py(r) + m} width={s} height={s} rx={Math.min(3, s * 0.22)}
-                    fill={blq ? C.tabla : cat ? CAT[cat].color : C.libre}
-                    stroke={isSel ? "#FFFFFF" : ls || (blq ? C.viga : "none")}
-                    strokeWidth={isSel ? 2 : ls ? 1.4 : blq ? 1.1 : 0}
-                    opacity={elegible && !ok && !isSel ? 0.28 : 1}
-                    style={{ cursor: ok ? "pointer" : "default" }}
-                    onMouseDown={onCell ? () => pintar(k) : undefined}
-                    onMouseEnter={() => { if (drag) pintar(k, drag); verTip(k); }}
-                    onMouseLeave={() => setTip(null)} />
-                );
-              })
+              Array.from({ length: b.ancho }, (_, c) =>
+                MITADES.map((h) => {
+                  const k = kCelda(r, c, h), cat = b.celdas[k], blq = b.bloq?.[k];
+                  const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
+                  const ok = elegible ? elegible(k, cat, blq) : false;
+                  const isSel = sel?.has(k);
+                  return (
+                    <rect key={k} data-k={k} x={px(c) + mx} y={yCuerda(r, h)} width={cel - 2 * mx} height={hs}
+                      rx={Math.min(2.5, hs / 2)}
+                      fill={blq ? C.tabla : cat ? CAT[cat].color : C.libre}
+                      stroke={isSel ? "#FFFFFF" : ls || (blq ? C.viga : "none")}
+                      strokeWidth={isSel ? 2 : ls ? 1.4 : blq ? 1.1 : 0}
+                      opacity={elegible && !ok && !isSel ? 0.28 : 1}
+                      style={{ cursor: ok ? "pointer" : "default" }}
+                      onMouseDown={onCell ? () => pintar(k) : undefined}
+                      onMouseEnter={() => { if (drag) pintar(k, drag); verTip(k); }}
+                      onMouseLeave={() => setTip(null)} />
+                  );
+                })
+              )
             )}
-            {/* Aspa en las celdas anuladas: se distinguen por forma, no solo por color */}
+            {/* Aspa en los puntos anulados: se distinguen por forma, no solo por color */}
             {Object.keys(b.bloq || {}).map((k) => {
-              const [r, c] = k.split("-").map(Number);
+              const { r, c, h } = leeK(k);
               if (r >= b.largo || c >= b.ancho) return null;
-              const m = Math.max(1, cel * 0.14) + 1.5;
-              return <line key={"x" + k} x1={px(c) + m} y1={py(r) + m} x2={px(c) + cel - m} y2={py(r) + cel - m}
+              const y = yCuerda(r, h);
+              return <line key={"x" + k} x1={px(c) + mx + 1} y1={y + 1} x2={px(c) + cel - mx - 1} y2={y + hs - 1}
                 stroke={C.alero} strokeWidth={1.1} opacity={0.7} pointerEvents="none" />;
             })}
 
@@ -389,7 +440,6 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
               <line key={"v" + r} x1={GUT} y1={py(r)} x2={gw} y2={py(r)} pointerEvents="none"
                 stroke={r === 0 ? C.alero : C.viga} strokeWidth={r === 0 ? 2.5 : 1} />
             ))}
-            {/* Aleros: cierran el perímetro por los dos costados */}
             {/* Metidos media pincelada hacia dentro: en el filo del dibujo se recortarían por la mitad */}
             <line x1={GUT + 1.25} y1={HEAD} x2={GUT + 1.25} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
             <line x1={gw - 1.25} y1={HEAD} x2={gw - 1.25} y2={py(b.largo)} stroke={C.alero} strokeWidth={2.5} pointerEvents="none" />
@@ -413,7 +463,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
             <text x={GUT + (mediaManga(b) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">BABOR</text>
             <text x={xEje + ((b.ancho - mediaManga(b)) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">ESTRIBOR</text>
             {Array.from({ length: b.largo }, (_, r) => (
-              <text key={"n" + r} x={GUT - 5} y={py(r) + cel / 2 + 3} textAnchor="end" fontSize="9" fill={C.mut} pointerEvents="none">{r + 1}</text>
+              <text key={"n" + r} x={GUT - 5} y={py(r) + alto / 2 + 3} textAnchor="end" fontSize="9" fill={C.mut} pointerEvents="none">{r + 1}</text>
             ))}
             {/* Por dónde pasan los flotadores: referencia de zona, bajo el plano */}
             {Array.from({ length: b.ancho }, (_, c) => esFlot(b, c) && (
@@ -575,7 +625,7 @@ function GestionBatea({ db }) {
       if (snap.exists) {
         const d = snap.data() || {};
         const datos = {
-          bateas: d.bateas || [], ops: d.ops || [], ventas: d.ventas || [],
+          bateas: (d.bateas || []).map(migraBatea), ops: d.ops || [], ventas: d.ventas || [],
           personas: d.personas || ["Román"], compradores: d.compradores || ["Udana"],
           limMeses: d.limMeses || LIM_MESES_DEFECTO,
         };
@@ -638,20 +688,19 @@ function GestionBatea({ db }) {
       // Los flotadores se guardan en puntones desde el alero: si la batea se estrecha,
       // los que ya no caben desaparecen y hay que volver a marcarlos.
       const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {},
-        flot: flotDe(b).filter((f) => f.d < Math.max(1, Math.floor(a / 2)))
-          .map((f) => ({ ...f, c1: Math.min(f.c1, l) })).filter((f) => f.c0 <= f.c1),
+        flot: flotDe(b).filter((d) => d < Math.max(1, Math.floor(a / 2))),
         extra: { ...b.extra } };
       let fuera = 0, flotFuera = 0;
       for (const [k, cat] of Object.entries(b.celdas)) {
-        const [r, c] = k.split("-").map(Number);
+        const { r, c } = leeK(k);
         if (r < l && c < a) { nb.celdas[k] = cat; if (b.lotes?.[k]) nb.lotes[k] = b.lotes[k]; }
         else { nb.extra[cat]++; fuera++; }
       }
       for (const k of Object.keys(b.bloq || {})) {
-        const [r, c] = k.split("-").map(Number);
+        const { r, c } = leeK(k);
         if (r < l && c < a) nb.bloq[k] = true; else flotFuera++;
       }
-      if (fuera || flotFuera) flash(`${nb.nombre}: ${fuera ? fuera + " cuerdas sin ubicar" : ""}${fuera && flotFuera ? " · " : ""}${flotFuera ? flotFuera + " flotadores fuera del nuevo tamaño (eliminados)" : ""}.`);
+      if (fuera || flotFuera) flash(`${nb.nombre}: ${fuera ? fuera + " cuerdas sin ubicar" : ""}${fuera && flotFuera ? " · " : ""}${flotFuera ? flotFuera + " puntos anulados fuera del nuevo tamaño (eliminados)" : ""}.`);
       return nb;
     }));
     cerrarEdit();
@@ -764,11 +813,12 @@ function GestionBatea({ db }) {
       for (const k of Object.keys(b.bloq)) {
         const cat = b.celdas[k];
         if (!cat) continue;
-        const [r] = k.split("-").map(Number);
+        const { r } = leeK(k);
         const lote = b.lotes[k];
         delete b.celdas[k]; delete b.lotes[k];
         let hueco = null;
-        for (let x = 0; x < b.ancho && !hueco; x++) if (libre(`${r}-${x}`)) hueco = `${r}-${x}`;
+        for (let x = 0; x < b.ancho && !hueco; x++)
+          for (const y of MITADES) if (!hueco && libre(kCelda(r, x, y))) hueco = kCelda(r, x, y);
         if (hueco) { b.celdas[hueco] = cat; if (lote != null) b.lotes[hueco] = lote; movidas++; }
         else { b.extra[cat]++; sinSitio++; }
       }
@@ -927,11 +977,12 @@ function GestionBatea({ db }) {
     const b = bx(fase.bateaId), s = base ? new Set(base) : new Set();
     const candidatas = [];
     for (let r = 0; r < b.largo; r++)
-      for (let c = 0; c < b.ancho; c++) {
-        const k = `${r}-${c}`, cat = b.celdas[k];
-        if (b.bloq?.[k]) continue;
-        if (fase.modo === "poner" ? !cat : cat === fase.cat) candidatas.push(k);
-      }
+      for (let c = 0; c < b.ancho; c++)
+        for (const h of MITADES) {
+          const k = kCelda(r, c, h), cat = b.celdas[k];
+          if (b.bloq?.[k]) continue;
+          if (fase.modo === "poner" ? !cat : cat === fase.cat) candidatas.push(k);
+        }
     if (fase.modo !== "poner") // retirar: prioriza las cuerdas más antiguas por fecha
       candidatas.sort((a, b2) => fechaCelda(b, a).localeCompare(fechaCelda(b, b2)));
     for (const k of candidatas) { if (s.size >= fase.n) break; s.add(k); }
