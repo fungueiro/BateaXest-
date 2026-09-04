@@ -24,6 +24,9 @@ De abajo arriba:
 - **Babor / estribor**: el eje longitudinal de la batea parte cada claro en dos mitades.
   Cada mitad es un **medio claro**, y es la unidad de la que se habla: "el 2º claro de
   babor". Vista en planta con la cadena arriba, babor queda a la izquierda.
+- Si la batea tiene un **número impar de puntones**, hay uno central por el que baja la
+  **cadena**: no es de babor ni de estribor, es el eje, y suele dejar puntos
+  inutilizables. Con número par el eje cae entre dos puntones y no hay puntón central.
 - **Zonas**: dentro de un medio claro, del alero hacia el eje, se distinguen tres
   tramos por referencias físicas, no por número: **ala**, **entre flotadores** y **medio**.
   No son cortes arbitrarios: **los marcan los propios flotadores**.
@@ -94,8 +97,12 @@ Las claves del formato anterior (`"claro-puntón"`, una cuerda por punto) se mig
 cargar con `migraBatea`: se leen como la cuerda de **proa**.
 
 Helpers de geometría en `index.html`: `kCelda` / `leeK` (construir y leer claves),
-`mediaManga`, `flotDe`, `esFlot`, `cortes`, `ladoCol`, `zonaCol`, `colsDe`,
-`nombreBloque`, `dondeCelda`, `migraBatea`.
+`mediaManga` (puntones de cada costado), `ejeCol` (el puntón de la cadena, o `-1`),
+`flotDe`, `esFlot`, `cortes`, `ladoCol` (`"babor"` / `"estribor"` / `"eje"`), `zonaCol`,
+`colsDe`, `nombreBloque`, `dondeCelda`, `migraBatea`.
+
+El puntón de la cadena no tiene zona: al seleccionar por zona forma un bloque de por sí,
+para poder anularlo sin bajar a modo cuerda.
 
 En el plano, la selección por zona se puede acotar a **las dos** cuerdas, solo **proa**
 o solo **popa**.
@@ -108,8 +115,9 @@ marcan los flotadores.
 `banco.jsx` + `banco.shell.html` (en el scratchpad de la sesión) montan la rejilla real
 fuera de la app, sin Firebase, y se publican como artifact. El JSX **se compila antes**
 y React va embebido: los artefactos publicados no permiten `eval` ni cargaron los
-scripts del CDN. `build.js` lo arma y `browser.js` / `flotest.js` lo verifican en
-Chromium.
+scripts del CDN. `build.js` lo arma, `stress.js` recorre geometrías raras
+(anchos impares incluidos) y `browser.js`, `anular.js`, `mitades.js` e `impar.js` lo
+verifican en Chromium.
 
 ## Pendiente
 

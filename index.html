@@ -213,8 +213,12 @@ const MITAD_LABEL = ["proa", "popa"];
 const ord = (n) => (n === 1 ? "1er" : n === 3 ? "3er" : `${n}º`);
 const kCelda = (r, c, h) => `${r}-${c}-${h}`;
 const leeK = (k) => { const p = k.split("-"); return { r: +p[0], c: +p[1], h: +p[2] || 0 }; };
-const mediaManga = (b) => Math.max(1, Math.floor(b.ancho / 2));
-const ladoCol = (b, c) => (c < mediaManga(b) ? "babor" : "estribor");
+const mediaManga = (b) => Math.floor(b.ancho / 2); // puntones de cada costado
+// Con un número impar de puntones hay uno central: por ahí baja la cadena. No es de
+// babor ni de estribor, es el eje, y suele dejar puntos inutilizables que se anulan
+// a mano. Con número par, el eje cae entre dos puntones y no hay puntón central.
+const ejeCol = (b) => (b.ancho % 2 ? mediaManga(b) : -1);
+const ladoCol = (b, c) => (c === ejeCol(b) ? "eje" : c < mediaManga(b) ? "babor" : "estribor");
 const dAlero = (b, c) => (c < mediaManga(b) ? c : b.ancho - 1 - c); // puntones hasta su alero
 // Los flotadores van longitudinales y son simétricos: se guardan por el puntón que
 // cubren en un costado, contado desde el alero (0 = el pegado a él), y se reflejan
@@ -229,6 +233,7 @@ const esFlot = (b, c) => flotDe(b).includes(dAlero(b, c));
 // todavía, se reparte la media manga en tres para tener algo con lo que hablar.
 const cortes = (b) => {
   const m = mediaManga(b), f = flotDe(b);
+  if (!m) return [0, 0];
   if (!f.length) return [Math.min(Math.max(1, Math.round(m / 3)), m), Math.min(Math.max(2, Math.round((2 * m) / 3)), m)];
   return [f[0], Math.min(f[f.length - 1] + 1, m)];
 };
@@ -238,7 +243,9 @@ const colsDe = (b, lado, zona) => {
   for (let c = 0; c < b.ancho; c++) if (ladoCol(b, c) === lado && zonaCol(b, c) === zona) cs.push(c);
   return cs;
 };
-const nombreBloque = (claro, lado, zona) => `${ord(claro)} claro de ${lado} · ${ZONA_LABEL[zona]}`;
+const nombreBloque = (claro, lado, zona) => lado === "eje"
+  ? `${ord(claro)} claro · puntón de la cadena`
+  : `${ord(claro)} claro de ${lado} · ${ZONA_LABEL[zona]}`;
 const dondeCelda = (b, k) => {
   const { r, c, h } = leeK(k);
   return `${nombreBloque(r + 1, ladoCol(b, c), zonaCol(b, c))} · ${MITAD_LABEL[h]}`;
@@ -300,7 +307,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   const alto = cel * ALTO; // alto de un claro entero, con sus dos cuerdas
   const gw = GUT + cel * b.ancho, gh = HEAD + alto * b.largo + FOOT;
   const scroll = dispW > 0 && gw > dispW + 0.5;
-  const xEje = GUT + mediaManga(b) * cel;
+  const xEje = GUT + (mediaManga(b) + (ejeCol(b) >= 0 ? 0.5 : 0)) * cel;
   const px = (c) => GUT + c * cel, py = (r) => HEAD + r * alto;
   // Las dos cuerdas se dibujan pegadas a su viga: juntas dentro del claro y
   // separadas del claro siguiente, para que se lean como pareja.
@@ -316,13 +323,14 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   const claves = (k) => {
     if (gran === "cuerda") return okK(k) ? [k] : [];
     const { r, c } = leeK(k), hs2 = mitad === "ambas" ? MITADES : [mitad];
-    return colsDe(b, ladoCol(b, c), zonaCol(b, c))
-      .flatMap((x) => hs2.map((h) => kCelda(r, x, h))).filter(okK);
+    // El puntón de la cadena no tiene zona: es un bloque de por sí
+    const cols = ladoCol(b, c) === "eje" ? [c] : colsDe(b, ladoCol(b, c), zonaCol(b, c));
+    return cols.flatMap((x) => hs2.map((h) => kCelda(r, x, h))).filter(okK);
   };
   const idBloque = (k) => {
     if (gran === "cuerda") return k;
-    const { r, c } = leeK(k);
-    return `${r}|${ladoCol(b, c)}|${zonaCol(b, c)}|${mitad}`;
+    const { r, c } = leeK(k), lado = ladoCol(b, c);
+    return `${r}|${lado}|${lado === "eje" ? "" : zonaCol(b, c)}|${mitad}`;
   };
   const pintar = (k, forzado) => {
     if (!onCell) return;
@@ -461,7 +469,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
             </g>
             {/* Costados y nº de claro */}
             <text x={GUT + (mediaManga(b) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">BABOR</text>
-            <text x={xEje + ((b.ancho - mediaManga(b)) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">ESTRIBOR</text>
+            <text x={gw - (mediaManga(b) / 2) * cel} y={HEAD - 8} textAnchor="middle" fontSize="9.5" fill={C.mut} letterSpacing="1.5" pointerEvents="none">ESTRIBOR</text>
             {Array.from({ length: b.largo }, (_, r) => (
               <text key={"n" + r} x={GUT - 5} y={py(r) + alto / 2 + 3} textAnchor="end" fontSize="9" fill={C.mut} pointerEvents="none">{r + 1}</text>
             ))}
