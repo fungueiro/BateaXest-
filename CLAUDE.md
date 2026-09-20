@@ -111,6 +111,11 @@ Helpers de geometría en `index.html`: `kCelda` / `leeK` (construir y leer clave
 El puntón de la cadena no tiene zona: al seleccionar por zona forma un bloque de por sí,
 para poder anularlo sin bajar a modo cuerda.
 
+La ficha que sale al pulsar o pasar por encima de una cuerda habla **del lote**, no del
+punto: cuántas cuerdas de ese lote quedan en la batea, la clase, la fecha y las
+observaciones (`cuerdasLote` + `loteInfo`). La dirección —claro, lado, zona, mitad— solo
+sale en los puntos libres o anulados, donde es lo único que hay que decir.
+
 En el plano, la selección por zona se puede acotar a **las dos** cuerdas, solo **proa**
 o solo **popa**.
 

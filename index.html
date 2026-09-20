@@ -69,6 +69,11 @@ const nuevaBatea = (id, nombre, ancho, largo) => ({
 // Cuántas cuerdas hay amontonadas en un punto. Lo normal es una: `mont` solo guarda
 // los puntos con más, los que hay que rarear (repartir) más adelante.
 const cant = (b, k) => (b.celdas[k] ? Math.max(1, b.mont?.[k] || 1) : 0);
+// Cuántas cuerdas de un lote quedan en la batea. El lote es la operación que las
+// sembró, y de ella salen la fecha y las observaciones. Se cuenta por lote Y clase
+// porque "init" —lo que ya estaba antes de llevar registro— agrupa de varias.
+const cuerdasLote = (b, cat, lote) => Object.entries(b.celdas)
+  .reduce((s, [k, c]) => s + (c === cat && (b.lotes?.[k] ?? "init") === lote ? cant(b, k) : 0), 0);
 const montones = (b) => Object.keys(b.celdas).filter((k) => cant(b, k) > 1);
 const amontonadas = (b) => montones(b).reduce((s, k) => s + cant(b, k) - 1, 0);
 // Dos cuerdas por puntón en cada claro —la de proa y la de popa—, menos los puntos
@@ -378,11 +383,13 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   const soltar = () => { setDrag(null); ultimo.current = null; };
 
   const texto = (k) => {
-    const donde = dondeCelda(b, k), cat = b.celdas[k];
-    if (b.bloq?.[k]) return `${donde} · anulada`;
-    if (!cat) return `${donde} · libre`;
-    const n = Math.max(1, b.mont?.[k] || 1);
-    return `${donde} · ${n > 1 ? n + " cuerdas · " : ""}${info ? info(k, cat) : CAT[cat].label}`;
+    const cat = b.celdas[k];
+    // Sin cuerda, lo único que hay que decir es dónde estás. Con cuerda interesa el
+    // lote —cuántas quedan, de qué clase, de cuándo y con qué anotación—, no la
+    // dirección del punto, que se ve en el propio plano.
+    if (b.bloq?.[k]) return `${dondeCelda(b, k)} · anulada`;
+    if (!cat) return `${dondeCelda(b, k)} · libre`;
+    return info ? info(k, cat) : CAT[cat].label;
   };
   const anchoTip = Math.min(230, Math.max(60, gw - 10));
   const verTip = (k) => {
@@ -709,9 +716,15 @@ function GestionBatea({ db }) {
     return () => clearTimeout(t);
   }, [bateas, ops, ventas, personas, compradores, limMeses, docRef]);
   const loteInfo = (b) => (k, cat) => {
-    const op = ops.find((x) => x.id === b.lotes?.[k]);
-    if (!op) return `${CAT[cat].label} · lote inicial`;
-    return `${CAT[cat].label} · ${op.fecha}${op.nota ? " · " + op.nota : ""}`;
+    const lote = b.lotes?.[k] ?? "init";
+    const op = ops.find((x) => x.id === lote);
+    const n = cuerdasLote(b, cat, lote), aqui = cant(b, k);
+    return [
+      `${fmtN(n)} ${n === 1 ? "cuerda" : "cuerdas"}${aqui > 1 ? ` (${aqui} en este punto)` : ""}`,
+      CAT[cat].label,
+      op ? op.fecha : "lote inicial",
+      op?.nota,
+    ].filter(Boolean).join(" · ");
   };
 
   // ── Edición de batea ──
@@ -1679,7 +1692,7 @@ function GestionBatea({ db }) {
                   <Warn>Solo quedan {fmtN(Math.max(0, libres(b)))} puntos libres para {falta} pendientes: el resto se amontonará sobre los puntos que marques, para rarearlo después.</Warn>
                 </div>
               )}
-              <Grid b={b} sel={pend.sel} onCell={toggleCell} onCells={toggleCells}
+              <Grid b={b} sel={pend.sel} onCell={toggleCell} onCells={toggleCells} info={loteInfo(b)}
                 elegible={(k, cat, blq) => !blq && (pend.sel.has(k) || (f.modo === "poner" ? !cat : cat === f.cat))} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={confirmarFase}>
