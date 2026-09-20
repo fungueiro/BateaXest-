@@ -727,9 +727,10 @@ function GestionBatea({ db }) {
 
   // Poner o quitar un flotador: es un puntón contado desde el alero, y va simétrico
   // en los dos costados.
-  const toggleFlot = (d) => setFlot((f) => ({
-    ...f, flot: f.flot.includes(d) ? f.flot.filter((x) => x !== d) : [...f.flot, d].sort((a, c) => a - c),
-  }));
+  const toggleFlot = (d) => setFlot((f) => {
+    const fs = f.flot || [];
+    return { ...f, flot: fs.includes(d) ? fs.filter((x) => x !== d) : [...fs, d].sort((a, c) => a - c) };
+  });
 
   // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
   const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
@@ -848,7 +849,7 @@ function GestionBatea({ db }) {
     const b = nuevaBatea(Date.now(), nb.nombre, a, v - 1);
     setBateas([...bateas, b]);
     setNb({ nombre: "", puntones: "", vigas: "" });
-    setFlot({ bateaId: b.id, sel: new Set() });
+    abrirFlot(b); // pasa por aquí siempre: construye el estado completo del panel
   };
 
   // ── Formulario de operación ──
@@ -1196,7 +1197,7 @@ function GestionBatea({ db }) {
                     </p>
                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
                       {Array.from({ length: m }, (_, d) => {
-                        const puesto = flot.flot.includes(d);
+                        const puesto = (flot.flot || []).includes(d);
                         return (
                           <button key={d} onClick={() => toggleFlot(d)}
                             aria-pressed={puesto}
