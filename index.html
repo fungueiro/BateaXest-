@@ -63,12 +63,20 @@ const descargarCSV = (nombre, headers, rows) => {
 // ─── Utilidades batea ─────────────────────────────────────────────────────
 // celdas: { "fila-col": categoria } · extra: cuerdas sin ubicar por categoría
 const nuevaBatea = (id, nombre, ancho, largo) => ({
-  id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, extra: { colectora: 0, desdoble: 0, venta: 0 },
+  id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, mont: {},
+  extra: { colectora: 0, desdoble: 0, venta: 0 },
 });
+// Cuántas cuerdas hay amontonadas en un punto. Lo normal es una: `mont` solo guarda
+// los puntos con más, los que hay que rarear (repartir) más adelante.
+const cant = (b, k) => (b.celdas[k] ? Math.max(1, b.mont?.[k] || 1) : 0);
+const montones = (b) => Object.keys(b.celdas).filter((k) => cant(b, k) > 1);
+const amontonadas = (b) => montones(b).reduce((s, k) => s + cant(b, k) - 1, 0);
 // Dos cuerdas por puntón en cada claro —la de proa y la de popa—, menos los puntos
 // anulados a mano (flotador, cadena, lo que sea).
 const cap = (b) => b.ancho * b.largo * 2 - Object.keys(b.bloq || {}).length;
-const nCeldas = (b, cat) => Object.values(b.celdas).filter((c) => !cat || c === cat).length;
+// Cuerdas, no puntos: un punto amontonado cuenta por todas las que lleva.
+const nCeldas = (b, cat) => Object.entries(b.celdas)
+  .reduce((s, [k, c]) => s + (!cat || c === cat ? cant(b, k) : 0), 0);
 const stock = (b, cat) => nCeldas(b, cat) + b.extra[cat];
 const ocup = (b) => nCeldas(b) + CATS.reduce((s, c) => s + b.extra[c], 0);
 const extraTot = (b) => CATS.reduce((s, c) => s + b.extra[c], 0);
@@ -85,7 +93,7 @@ const exceso = (b) => {
   return av;
 };
 const capLog = () => LIM_PROD + LIM_COL; // tope lógico de cuerdas por batea (500 + 100)
-const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, extra: { ...b.extra } }));
+const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, mont: { ...b.mont }, extra: { ...b.extra } }));
 const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
 // Alertas de manejo por antigüedad: valores por defecto, ajustables desde la app (Resumen)
 const LIM_MESES_DEFECTO = { colectora: 8, desdoble: 12, venta: 3 };
@@ -259,6 +267,7 @@ const migraClaves = (o) => {
 };
 const migraBatea = (b) => ({
   ...b, celdas: migraClaves(b.celdas), lotes: migraClaves(b.lotes), bloq: migraClaves(b.bloq),
+  mont: migraClaves(b.mont),
   flot: (b.flot || []).map((f) => (typeof f === "number" ? f : f?.d)).filter((d) => Number.isInteger(d)),
 });
 
@@ -349,7 +358,8 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     const donde = dondeCelda(b, k), cat = b.celdas[k];
     if (b.bloq?.[k]) return `${donde} · anulada`;
     if (!cat) return `${donde} · libre`;
-    return `${donde} · ${info ? info(k, cat) : CAT[cat].label}`;
+    const n = Math.max(1, b.mont?.[k] || 1);
+    return `${donde} · ${n > 1 ? n + " cuerdas · " : ""}${info ? info(k, cat) : CAT[cat].label}`;
   };
   const anchoTip = Math.min(230, Math.max(60, gw - 10));
   const verTip = (k) => {
@@ -419,8 +429,15 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
                   const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
                   const ok = elegible ? elegible(k, cat, blq) : false;
                   const isSel = sel?.has(k);
+                  const monton = cat && Math.max(1, b.mont?.[k] || 1) > 1;
                   return (
-                    <rect key={k} data-k={k} x={px(c) + mx} y={yCuerda(r, h)} width={cel - 2 * mx} height={hs}
+                    <React.Fragment key={k}>
+                    {/* Amontonado: una copia detrás, como cuerdas apiladas */}
+                    {monton && (
+                      <rect x={px(c) + mx + 1.5} y={yCuerda(r, h) - 1.8} width={cel - 2 * mx} height={hs}
+                        rx={Math.min(2.5, hs / 2)} fill={CAT[cat].color} opacity={0.5} pointerEvents="none" />
+                    )}
+                    <rect data-k={k} x={px(c) + mx} y={yCuerda(r, h)} width={cel - 2 * mx} height={hs}
                       rx={Math.min(2.5, hs / 2)}
                       fill={blq ? C.tabla : cat ? CAT[cat].color : C.libre}
                       stroke={isSel ? "#FFFFFF" : ls || (blq ? C.viga : "none")}
@@ -430,6 +447,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
                       onMouseDown={onCell ? () => pintar(k) : undefined}
                       onMouseEnter={() => { if (drag) pintar(k, drag); verTip(k); }}
                       onMouseLeave={() => setTip(null)} />
+                    </React.Fragment>
                   );
                 })
               )
@@ -752,13 +770,23 @@ function GestionBatea({ db }) {
       setReub({ ...reub, sel });
       return;
     }
-    if (reub.sel.size) { // celda libre: mueve la primera del grupo (orden de selección)
+    if (reub.sel.size) { // punto libre: mueve la primera del grupo (orden de selección)
       const from = reub.sel.values().next().value;
-      b.celdas[k] = b.celdas[from]; delete b.celdas[from];
-      if (b.lotes?.[from] != null) { b.lotes[k] = b.lotes[from]; delete b.lotes[from]; }
-      const sel = new Set(reub.sel); sel.delete(from);
+      mover(b, from, k);
+      const sel = new Set(reub.sel);
+      if (!b.celdas[from]) sel.delete(from);
       setBateas(bs); setReub({ ...reub, sel });
     }
+  };
+  // Mover una cuerda de un punto a otro. Conserva el lote, y con él el color, la
+  // fecha y las notas: es la misma cuerda, solo cambia de sitio. Si el origen estaba
+  // amontonado baja el montón en vez de vaciarse — eso es rarear.
+  const mover = (b, from, to) => {
+    b.celdas[to] = b.celdas[from];
+    if (b.lotes?.[from] != null) b.lotes[to] = b.lotes[from];
+    const n = cant(b, from);
+    if (n > 1) b.mont[from] = n - 1;
+    else { delete b.celdas[from]; delete b.lotes[from]; delete b.mont[from]; }
   };
   // Selección por bloque: el gesto normal es "todo el 3er claro de babor, entre
   // flotadores", no cuerda a cuerda. La rejilla resuelve qué celdas abarca y estos
@@ -791,9 +819,9 @@ function GestionBatea({ db }) {
         if (!sel.size) break;
         if (b.celdas[k] || b.bloq?.[k]) continue;
         const from = sel.values().next().value;
-        b.celdas[k] = b.celdas[from]; delete b.celdas[from];
-        if (b.lotes?.[from] != null) { b.lotes[k] = b.lotes[from]; delete b.lotes[from]; }
-        sel.delete(from);
+        mover(b, from, k);
+        // Un punto amontonado sigue dando cuerdas: se queda en el grupo hasta vaciarse
+        if (!b.celdas[from]) sel.delete(from);
       }
       setBateas(bs); setReub({ ...reub, sel });
     }
@@ -1014,19 +1042,42 @@ function GestionBatea({ db }) {
     let origen = pend.origen || {};
     if (f.modo === "poner") {
       pend.sel.forEach((k) => { b.celdas[k] = f.cat; b.lotes[k] = pend.op.id; });
-      if (resto > 0) { // sobrecapacidad o sin ubicar: se registra igual + aviso
-        b.extra[f.cat] += resto;
-        flash(`${b.nombre}: ${resto} cuerdas sin punto libre → registradas sin ubicar (posible sobrecapacidad).`);
+      if (resto > 0) {
+        // Lo que no cabe se amontona sobre los puntos marcados, repartido a partes
+        // iguales: en la batea se hace así y luego se rarea. Solo cae en "sin ubicar"
+        // si no se marcó ningún punto donde ponerlo.
+        const ks = [...pend.sel];
+        if (!ks.length) {
+          b.extra[f.cat] += resto;
+          flash(`${b.nombre}: ${resto} cuerdas sin ubicar — no marcaste dónde ponerlas.`);
+        } else {
+          ks.forEach((k, i) => { b.mont[k] = (b.mont[k] || 1) + Math.floor(resto / ks.length) + (i < resto % ks.length ? 1 : 0); });
+          const tope = Math.max(...ks.map((k) => b.mont[k] || 1));
+          flash(`${b.nombre}: ${resto} cuerdas de más repartidas sobre lo marcado — hasta ${tope} por punto. Usa Recolocar para rarearlas.`);
+        }
       }
     } else {
       // Traza de qué lote(s) salen las cuerdas retiradas, para la ficha de trazabilidad
       const origenFase = {};
-      pend.sel.forEach((k) => {
+      // Retirar una cuerda de un punto: si está amontonado baja el montón, si no,
+      // el punto queda libre.
+      const quitarUna = (k) => {
         const loteId = b.lotes[k] ?? "init";
         origenFase[loteId] = (origenFase[loteId] || 0) + 1;
-        delete b.celdas[k]; delete b.lotes[k];
-      });
-      if (resto > 0) {
+        const n = cant(b, k);
+        if (n > 1) b.mont[k] = n - 1;
+        else { delete b.celdas[k]; delete b.lotes[k]; delete b.mont[k]; }
+      };
+      pend.sel.forEach(quitarUna);
+      let falta = resto;
+      // Lo que falte sale de los montones que hay bajo lo ya marcado
+      while (falta > 0) {
+        const k = [...pend.sel].find((x) => cant(b, x) > 1);
+        if (!k) break;
+        quitarUna(k); falta--;
+      }
+      if (falta > 0) {
+        const resto = falta;
         const deExtra = Math.min(resto, b.extra[f.cat]);
         b.extra[f.cat] -= deExtra;
         if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} cuerdas más de ${CAT[f.cat].label}.`);
@@ -1351,6 +1402,10 @@ function GestionBatea({ db }) {
                           <Warn key={e.tipo}>Límite superado en {e.tipo}: {fmtN(e.actual)} cuerdas (máx. {fmtN(e.lim)}) → {fmtN(e.n)} por encima.</Warn>
                         ))}
                         {ext > 0 && <Warn>{fmtN(ext)} cuerdas sin ubicar en el plano.</Warn>}
+                        {montones(b).length > 0 && (
+                          <Warn>{fmtN(amontonadas(b))} cuerdas amontonadas en {fmtN(montones(b).length)} puntos
+                            (hasta {Math.max(...montones(b).map((k) => cant(b, k)))} en uno) — usa Recolocar para rarearlas.</Warn>
+                        )}
                         {alEdad.map((a) => (
                           <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${a.antigua})` : ""} — {MENSAJE_ALERTA[a.cat]}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
                         ))}
@@ -1614,11 +1669,11 @@ function GestionBatea({ db }) {
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
                 Fase {pend.fase + 1} de {pend.fases.length} · marcadas {pend.sel.size} / {f.n}
                 {f.modo === "poner" && <> · puntos libres en {b.nombre}: <b>{fmtN(Math.max(0, libres(b)))}</b></>}
-                {f.modo === "poner" && falta > 0 && <> · las no ubicadas se registran igualmente con aviso</>}
+                {f.modo === "poner" && falta > 0 && <> · lo que no quepa se amontona sobre lo marcado</>}
               </p>
               {f.modo === "poner" && libres(b) < falta && (
                 <div style={{ marginBottom: 10 }}>
-                  <Warn>Solo quedan {fmtN(Math.max(0, libres(b)))} puntos libres para {falta} pendientes: {falta - Math.max(0, libres(b))} se registrarán sin ubicar (sobrecapacidad) si confirmas así.</Warn>
+                  <Warn>Solo quedan {fmtN(Math.max(0, libres(b)))} puntos libres para {falta} pendientes: el resto se amontonará sobre los puntos que marques, para rarearlo después.</Warn>
                 </div>
               )}
               <Grid b={b} sel={pend.sel} onCell={toggleCell} onCells={toggleCells}

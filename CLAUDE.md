@@ -52,8 +52,11 @@ Los claros se van llenando de proa a popa o al revés. La capacidad física de l
 es, por tanto, el número de claros por puntones: es el doble, y el límite real es el
 normativo (500 cuerdas de venta + mexilla, 100 de colectora).
 
-Queda fuera del modelo el caso excepcional de amontonar más de dos en un punto para
-**rarearlas** (repartirlas) más adelante; eso hoy cae en `extra`.
+Y cuando no hay sitio se **amontonan**: se cuelgan varias del mismo punto y se
+**rarean** (reparten) más adelante. Eso no es un caso raro que pueda caer en "sin
+ubicar" — es cómo se trabaja, así que el plano tiene que admitirlo y avisar de la
+densidad. Al rarearlas conservan su lote, y con él color, fecha y notas: son las
+mismas cuerdas cambiando de sitio.
 
 En los aleros normalmente no se amarran cuerdas, pero puede hacerse en ciertos momentos.
 
@@ -89,9 +92,13 @@ El objeto batea (`nuevaBatea`) usa claves `"claro-puntón-mitad"`, que se leen a
 - `bloq[k]` = punto anulado, pintado sobre el plano. Es lo que dibuja los flotadores y
   la cadena, y lo único que resta capacidad. Anular un punto con cuerda la aparta a un
   hueco de su mismo claro, o a `extra` si no cabe.
-- `extra[cat]` = cuerdas registradas sin sitio en el plano
+- `mont[k]` = cuerdas amontonadas en ese punto. Ausente = una, que es lo normal;
+  solo guarda los puntos que hay que rarear. `cant(b,k)` lo lee siempre por aquí.
+- `extra[cat]` = cuerdas registradas sin sitio en el plano. Ya solo se usa si al
+  colocar no se marcó ningún punto: lo que sobra se amontona sobre lo marcado.
 
-`cap(b)` = `ancho × largo × 2 − puntos anulados`.
+`cap(b)` = `ancho × largo × 2 − puntos anulados`, que son **puntos de amarre**, no
+cuerdas: amontonando caben más. `nCeldas` cuenta cuerdas, sumando los montones.
 
 Las claves del formato anterior (`"claro-puntón"`, una cuerda por punto) se migran al
 cargar con `migraBatea`: se leen como la cuerda de **proa**.
@@ -121,9 +128,6 @@ verifican en Chromium.
 
 ## Pendiente
 
-- **Rarear** como operación de primera clase (repartir cuerdas amontonadas).
-- `extra` ("cuerdas sin ubicar") pierde casi todo su sentido ahora que el plano tiene el
-  doble de sitio: era un parche a un límite físico que en realidad no existe.
 - Rendimiento: `Grid` no está memoizado y `loteInfo(b)` crea una función nueva en cada
   render; cada celda pintada reescribe el documento entero de Firestore.
 
