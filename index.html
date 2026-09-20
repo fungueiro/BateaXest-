@@ -144,6 +144,29 @@ const mini = (color) => ({ background: "transparent", border: `1px solid ${color
 const Field = ({ label, children, w }) => (
   <div style={{ flex: 1, minWidth: w || 130 }}><label style={lbl}>{label}</label>{children}</div>
 );
+// Estos dos viven fuera del componente a propósito: definidos dentro, React los
+// recrea en cada render y desmonta los campos, así que el selector de fecha se
+// cerraba a cada pulsación y no se podía escribir en él.
+const FechaFiltro = ({ f, setF }) => (
+  <>
+    <Field label="Desde" w={140}><input style={inp} type="date" value={f.desde} onChange={(e) => setF({ ...f, desde: e.target.value })} /></Field>
+    <Field label="Hasta" w={140}><input style={inp} type="date" value={f.hasta} onChange={(e) => setF({ ...f, hasta: e.target.value })} /></Field>
+  </>
+);
+const BChips = ({ f, setF, bateas }) => (
+  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+    {bateas.map((b) => {
+      const on = f.bateas.includes(b.id);
+      return (
+        <button key={b.id} onClick={() => setF({ ...f, bateas: on ? f.bateas.filter((i) => i !== b.id) : [...f.bateas, b.id] })}
+          style={{ background: on ? C.rope : "transparent", color: on ? C.ink : C.text, border: `1px solid ${on ? C.rope : C.line}`, borderRadius: 20, padding: "4px 12px", fontSize: 12, cursor: "pointer" }}>
+          {b.nombre}
+        </button>
+      );
+    })}
+    {f.bateas.length === 0 && <span style={{ color: C.mut, fontSize: 12 }}>todas</span>}
+  </div>
+);
 const Warn = ({ children }) => (
   <span style={{ color: C.warn, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
     <span style={{ fontWeight: 700 }}>⚠</span>{children}
@@ -1153,26 +1176,6 @@ function GestionBatea({ db }) {
   const [fr, setFr] = useState({ desde: "", hasta: "", tipo: "", bateas: [] });
   const [fa, setFa] = useState({ desde: "", hasta: "", bateas: [], modo: "" });
   const enB = (lista, ...ids) => lista.length === 0 || ids.some((i) => lista.includes(i));
-  const BChips = ({ f, setF }) => (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-      {bateas.map((b) => {
-        const on = f.bateas.includes(b.id);
-        return (
-          <button key={b.id} onClick={() => setF({ ...f, bateas: on ? f.bateas.filter((i) => i !== b.id) : [...f.bateas, b.id] })}
-            style={{ background: on ? C.rope : "transparent", color: on ? C.ink : C.text, border: `1px solid ${on ? C.rope : C.line}`, borderRadius: 20, padding: "4px 12px", fontSize: 12, cursor: "pointer" }}>
-            {b.nombre}
-          </button>
-        );
-      })}
-      {f.bateas.length === 0 && <span style={{ color: C.mut, fontSize: 12 }}>todas</span>}
-    </div>
-  );
-  const FechaFiltro = ({ f, setF }) => (
-    <>
-      <Field label="Desde" w={140}><input style={inp} type="date" value={f.desde} onChange={(e) => setF({ ...f, desde: e.target.value })} /></Field>
-      <Field label="Hasta" w={140}><input style={inp} type="date" value={f.hasta} onChange={(e) => setF({ ...f, hasta: e.target.value })} /></Field>
-    </>
-  );
 
   const tabs = [["bateas", "Bateas"], ["ops", "Operaciones"], ["ventas", "Ventas"], ["stats", "Resumen"], ["analisis", "Análisis"]];
 
@@ -1828,10 +1831,10 @@ function GestionBatea({ db }) {
           const capTot = bateas.length * capLog();
           const ocupTot = bateas.reduce((s, b) => s + ocup(b), 0);
           const kpis = [
-            ["Cuerdas de venta listas", fmtN(stockTot("venta")), C.foam],
-            ["Mexilla en curso", fmtN(stockTot("desdoble")), C.pink],
-            ["Colectoras", fmtN(stockTot("colectora")), C.rope],
-            ["Ocupación total", `${fmtN(ocupTot)} / ${fmtN(capTot)} (${capTot ? Math.round((ocupTot / capTot) * 100) : 0}%)`, ocupTot > capTot ? C.warn : C.text],
+            ["Cuerdas de venta listas (hoy)", fmtN(stockTot("venta")), C.foam],
+            ["Mexilla en curso (hoy)", fmtN(stockTot("desdoble")), C.pink],
+            ["Colectoras (hoy)", fmtN(stockTot("colectora")), C.rope],
+            ["Ocupación total (hoy)", `${fmtN(ocupTot)} / ${fmtN(capTot)} (${capTot ? Math.round((ocupTot / capTot) * 100) : 0}%)`, ocupTot > capTot ? C.warn : C.text],
             ["Facturado (filtro)", fmtEUR(ventasR.reduce((s, x) => s + x.total, 0)), C.text],
             ["Pendiente de cobro (filtro)", fmtEUR(ventasR.filter((x) => x.estado === "pendiente").reduce((s, x) => s + x.total, 0)), C.warn],
           ];
@@ -1845,7 +1848,7 @@ function GestionBatea({ db }) {
                     <option value="venta">Venta / cosecha</option><option value="movimiento">Movimiento</option><option value="ajuste">Ajuste</option>
                   </select>
                 </Field>
-                <Field label="Bateas" w={220}><BChips f={fr} setF={setFr} /></Field>
+                <Field label="Bateas" w={220}><BChips f={fr} setF={setFr} bateas={bateas} /></Field>
                 <button style={btn(false)} onClick={() => setFr({ desde: "", hasta: "", tipo: "", bateas: [] })}>Limpiar</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,200px),1fr))", gap: 14 }}>
@@ -1856,6 +1859,36 @@ function GestionBatea({ db }) {
                   </div>
                 ))}
               </div>
+              <h3 style={h3}>Movimiento en el periodo</h3>
+              {(() => {
+                const cuerdas = (t) => opsR.filter((o) => o.tipo === t).reduce((x, o) => x + o.n, 0);
+                const hayFiltro = fr.desde || fr.hasta || fr.tipo || fr.bateas.length;
+                if (!opsR.length) return (
+                  <p style={{ color: C.mut, fontSize: 14 }}>
+                    {hayFiltro ? "Ninguna operación cae dentro del filtro." : "Todavía no hay operaciones registradas."}
+                  </p>
+                );
+                return (
+                  <>
+                    <p style={{ color: C.mut, fontSize: 13, margin: "0 0 10px" }}>
+                      {fmtN(opsR.length)} {opsR.length === 1 ? "operación" : "operaciones"}
+                      {fr.desde || fr.hasta ? ` · ${fr.desde || "el principio"} → ${fr.hasta || "hoy"}` : " · todas las fechas"}
+                    </p>
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {[["siembra", C.rope], ["desdoble", C.pink], ["venta", C.foam], ["movimiento", C.mut], ["ajuste", C.mut]]
+                        .map(([t, col]) => [t, col, cuerdas(t)]).filter(([, , n]) => n > 0)
+                        .map(([t, col, n]) => (
+                          <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 16px" }}>
+                            <div style={lbl}>{TIPO_LABEL[t]}</div>
+                            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, color: col }}>
+                              {fmtN(n)} <span style={{ fontSize: 13, color: C.mut, fontWeight: 400 }}>cuerdas</span>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </>
+                );
+              })()}
               <h3 style={h3}>Stock por batea</h3>
               <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
@@ -1975,7 +2008,7 @@ function GestionBatea({ db }) {
                     <option value="">Todos</option><option value="sacos">Bolsas</option><option value="granel">Granel</option>
                   </select>
                 </Field>
-                <Field label="Bateas" w={220}><BChips f={fa} setF={setFa} /></Field>
+                <Field label="Bateas" w={220}><BChips f={fa} setF={setFa} bateas={bateas} /></Field>
                 <button style={btn(false)} onClick={() => setFa({ desde: "", hasta: "", bateas: [], modo: "" })}>Limpiar</button>
                 <button style={btn(false)} onClick={() => descargarCSV("analisis_ventas.csv",
                   ["Fecha", "Batea", "Modo", "Cuerdas", "Kg", "€ base", "€ total", "Nota"],
