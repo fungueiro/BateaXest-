@@ -12,8 +12,7 @@ service cloud.firestore {
 
     function autorizado() {
       return request.auth != null && request.auth.uid in [
-        // Consola de Firebase → Authentication → Users → "Identificador de usuario"
-        "PON_AQUI_TU_UID"
+        "1MJdqyFrRxWeO2JCuZvmvMu40Ig1"
       ];
     }
 
