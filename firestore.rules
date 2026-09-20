@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// El cuaderno vive en un único documento compartido, cuaderno/estado, así que la
+// separación no la hace la app: la hace esta regla. `request.auth != null` NO basta:
+// la API de registro de Firebase es pública y la clave del proyecto va en el HTML,
+// así que cualquiera puede crearse una cuenta y cumplir esa condición. El acceso se
+// ata a los UID que de verdad llevan el cuaderno.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autorizado() {
+      return request.auth != null && request.auth.uid in [
+        // Consola de Firebase → Authentication → Users → columna "Identificador de usuario"
+        "PON_AQUI_TU_UID"
+      ];
+    }
+
+    match /cuaderno/{doc} {
+      allow read, write: if autorizado();
+    }
+
+    // Todo lo demás, cerrado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
