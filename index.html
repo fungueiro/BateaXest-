@@ -788,6 +788,12 @@ function GestionBatea({ db }) {
 
   // ── Recolocación: mover cuerdas de celda y ubicar las "sin ubicar" ──
   const [reub, setReub] = useState(null); // {bateaId, sel:Set, cat}
+
+  // Los paneles Plano y Recolocar salen arriba de la lista; si se abren desde una batea de
+  // más abajo, la pantalla se queda allí. Al abrir uno (o cambiar de batea) subimos hasta él.
+  const flotRef = useRef(null), reubRef = useRef(null);
+  useEffect(() => { if (flot) flotRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [flot?.bateaId]);
+  useEffect(() => { if (reub) reubRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [reub?.bateaId]);
   const reubCell = (k, modo) => {
     const bs = clon(bateas);
     const b = bs.find((x) => x.id === reub.bateaId);
@@ -1242,7 +1248,7 @@ function GestionBatea({ db }) {
           const b = bx(flot.bateaId);
           if (!b) return null;
           return (
-            <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
+            <div ref={flotRef} style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
               <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
                 Plano — {b.nombre}
               </h2>
@@ -1298,7 +1304,7 @@ function GestionBatea({ db }) {
           const b = bx(reub.bateaId);
           if (!b) return null;
           return (
-            <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
+            <div ref={reubRef} style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
               <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
                 Recolocar — {b.nombre}
               </h2>
