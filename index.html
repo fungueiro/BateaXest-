@@ -312,6 +312,11 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   const [mitad, setMitad] = useState("ambas"); // "ambas" | 0 | 1
   const [drag, setDrag] = useState(null);
   const [tip, setTip] = useState(null);
+  // En táctil, un plano en el que se marca se queda el dedo para pintar y no se puede
+  // deslizar. Si no cabe a lo ancho, el dedo alterna entre marcar y deslizar.
+  const [mover, setMover] = useState(false);
+  // Tras un toque el navegador emula un clic de ratón: no debe pintar por su cuenta.
+  const toque = useRef(0);
   // El ancho real del contenedor manda: es lo único que garantiza que la celda
   // no baje del mínimo táctil (antes se calculaba contra un maxW supuesto).
   useEffect(() => {
@@ -344,6 +349,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   const alto = cel * ALTO; // alto de un claro entero, con sus dos cuerdas
   const gw = GUT + cel * b.ancho, gh = HEAD + alto * b.largo + FOOT;
   const scroll = dispW > 0 && gw > dispW + 0.5;
+  const marca = !!onCell && !(scroll && mover); // el dedo pinta (y no desliza)
   const xEje = GUT + (mediaManga(b) + (ejeCol(b) >= 0 ? 0.5 : 0)) * cel;
   const px = (c) => GUT + c * cel, py = (r) => HEAD + r * alto;
   // Las dos cuerdas se dibujan pegadas a su viga: juntas dentro del claro y
@@ -404,12 +410,13 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     return document.elementFromPoint(t.clientX, t.clientY)?.getAttribute?.("data-k") || null;
   };
   const onTS = (e) => {
+    toque.current = Date.now();
     const k = kTouch(e);
     if (!k) return;
-    if (onCell) pintar(k); else verTip(k);
+    if (marca) pintar(k); else verTip(k);
   };
   const onTM = (e) => {
-    if (!onCell || !drag) return;
+    if (!marca || !drag) return;
     const k = kTouch(e);
     if (k) pintar(k, drag);
   };
@@ -433,6 +440,13 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
               {chip(mitad === 1, "popa", () => setMitad(1))}
             </>
           )}
+          {scroll && (
+            <>
+              <span style={{ marginLeft: 4 }}>dedo</span>
+              {chip(!mover, "marcar", () => setMover(false))}
+              {chip(mover, "deslizar ↔", () => setMover(true))}
+            </>
+          )}
         </div>
       )}
       <div style={{ overflowX: scroll ? "auto" : "visible", overflowY: scroll ? "hidden" : "visible", WebkitOverflowScrolling: "touch" }}>
@@ -445,7 +459,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
               pointerEvents: "none", zIndex: 5 }}>{tip.txt}</div>
           )}
           <svg width={gw} height={gh}
-            style={{ display: "block", userSelect: "none", touchAction: onCell ? "none" : "auto" }}
+            style={{ display: "block", userSelect: "none", touchAction: marca ? "none" : "auto" }}
             onMouseUp={soltar} onMouseLeave={() => { soltar(); setTip(null); }}
             onTouchStart={onTS} onTouchMove={onTM} onTouchEnd={soltar} onTouchCancel={soltar}>
 
@@ -474,7 +488,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
                       strokeWidth={isSel ? 2 : ls ? 1.4 : blq ? 1.1 : 0}
                       opacity={elegible && !ok && !isSel ? 0.28 : 1}
                       style={{ cursor: ok ? "pointer" : "default" }}
-                      onMouseDown={onCell ? () => pintar(k) : undefined}
+                      onMouseDown={onCell ? () => { if (Date.now() - toque.current > 800) pintar(k); } : undefined}
                       onMouseEnter={() => { if (drag) pintar(k, drag); verTip(k); }}
                       onMouseLeave={() => setTip(null)} />
                     </React.Fragment>
