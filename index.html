@@ -48,7 +48,7 @@ const CATS = Object.keys(CAT);
 const hoy = () => new Date().toISOString().slice(0, 10);
 const fmtEUR = (n) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const fmtN = (n) => n.toLocaleString("es-ES");
-const DESCT = 4.38, IVA = 10.5;
+const DESCT = 2.19, IVA = 10.5;
 const totalVenta = (b) => b * (1 - DESCT / 100) * (1 + IVA / 100);
 const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 const descargarCSV = (nombre, headers, rows) => {
