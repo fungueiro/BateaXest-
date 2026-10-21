@@ -89,15 +89,21 @@ const libres = (b) => cap(b) - ocup(b);
 // Límite lógico por batea (independiente del nº de celdas)
 const LIM_PROD = 500; // venta + mexilla/desdoble
 const LIM_COL = 100;  // colectora
+// Parte de la batea que se gestiona: 1 = entera, 0.5 = media batea (compartida).
+// Escala los límites normativos; el plano físico no cambia.
+const parteDe = (b) => (b.parte === 0.5 ? 0.5 : 1);
+const limProd = (b) => Math.round(LIM_PROD * parteDe(b));
+const limCol = (b) => Math.round(LIM_COL * parteDe(b));
 const exceso = (b) => {
   const prod = stock(b, "venta") + stock(b, "desdoble");
   const col = stock(b, "colectora");
+  const lp = limProd(b), lc = limCol(b);
   const av = [];
-  if (prod > LIM_PROD) av.push({ tipo: "venta + mexilla/desdoble", n: prod - LIM_PROD, lim: LIM_PROD, actual: prod });
-  if (col > LIM_COL) av.push({ tipo: "colectora", n: col - LIM_COL, lim: LIM_COL, actual: col });
+  if (prod > lp) av.push({ tipo: "venta + mexilla/desdoble", n: prod - lp, lim: lp, actual: prod });
+  if (col > lc) av.push({ tipo: "colectora", n: col - lc, lim: lc, actual: col });
   return av;
 };
-const capLog = () => LIM_PROD + LIM_COL; // tope lógico de cuerdas por batea (500 + 100)
+const capLog = (b) => limProd(b) + limCol(b); // tope lógico de cuerdas: 600 entera, 300 media
 const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, mont: { ...b.mont }, extra: { ...b.extra } }));
 const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
 // Alertas de manejo por antigüedad: valores por defecto, ajustables desde la app (Resumen)
@@ -749,7 +755,7 @@ function GestionBatea({ db }) {
   // fuera de pantalla si la lista está desplazada. Subimos hasta ella para que se vea.
   const abrirEdit = (b) => {
     setDelBatea(null);
-    setEdit({ id: b.id, nombre: b.nombre, vigas: b.largo + 1, puntones: b.ancho });
+    setEdit({ id: b.id, nombre: b.nombre, vigas: b.largo + 1, puntones: b.ancho, parte: parteDe(b) });
     requestAnimationFrame(() => cardRefs.current[b.id]?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
   const cerrarEdit = () => { setEdit(null); setDelBatea(null); };
@@ -763,7 +769,7 @@ function GestionBatea({ db }) {
       if (b.id !== edit.id) return b;
       // Los flotadores se guardan en puntones desde el alero: si la batea se estrecha,
       // los que ya no caben desaparecen y hay que volver a marcarlos.
-      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, celdas: {}, lotes: {}, bloq: {},
+      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, parte: edit.parte === 0.5 ? 0.5 : 1, celdas: {}, lotes: {}, bloq: {},
         flot: flotDe(b).filter((d) => d < Math.max(1, Math.floor(a / 2))),
         extra: { ...b.extra } };
       let fuera = 0, flotFuera = 0;
@@ -924,15 +930,15 @@ function GestionBatea({ db }) {
   };
 
   // ── Alta de batea ──
-  const [nb, setNb] = useState({ nombre: "", puntones: "", vigas: "" });
+  const [nb, setNb] = useState({ nombre: "", puntones: "", vigas: "", parte: 1 });
   const addBatea = () => {
     const a = parseInt(nb.puntones), v = parseInt(nb.vigas);
     if (!nb.nombre || !a || !v) return flash("Nombre, vigas y puntones requeridos.");
     if (v < 2) return flash("Una batea necesita al menos 2 vigas (1 claro).");
     pushHistorial(`Añadir batea "${nb.nombre}"`);
-    const b = nuevaBatea(Date.now(), nb.nombre, a, v - 1);
+    const b = { ...nuevaBatea(Date.now(), nb.nombre, a, v - 1), parte: nb.parte === 0.5 ? 0.5 : 1 };
     setBateas([...bateas, b]);
-    setNb({ nombre: "", puntones: "", vigas: "" });
+    setNb({ nombre: "", puntones: "", vigas: "", parte: 1 });
     abrirFlot(b); // pasa por aquí siempre: construye el estado completo del panel
   };
 
@@ -1390,6 +1396,11 @@ function GestionBatea({ db }) {
                           <Field label="Nombre" w={110}><input style={inp} value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })} /></Field>
                           <Field label="Vigas" w={70}><input style={inp} type="number" value={edit.vigas} onChange={(e) => setEdit({ ...edit, vigas: e.target.value })} /></Field>
                           <Field label="Puntones" w={80}><input style={inp} type="number" value={edit.puntones} onChange={(e) => setEdit({ ...edit, puntones: e.target.value })} /></Field>
+                          <Field label="Gestión" w={130}>
+                            <select style={inp} value={edit.parte} onChange={(e) => setEdit({ ...edit, parte: parseFloat(e.target.value) })}>
+                              <option value={1}>Batea entera</option><option value={0.5}>Media batea</option>
+                            </select>
+                          </Field>
                           <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                             <button style={btn(true)} onClick={saveEdit}>Guardar</button>
                             <button style={btn(false)} onClick={() => { cerrarEdit(); abrirFlot(b); }}>Plano</button>
@@ -1402,7 +1413,7 @@ function GestionBatea({ db }) {
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                           <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", margin: 0 }}>{b.nombre}</h2>
                           <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, color: sobre ? C.warn : C.mut }}>
-                            <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.largo + 1} vigas · {b.ancho} puntones</span>
+                            <span style={{ whiteSpace: "nowrap" }}>{fmtN(oc)} / {fmtN(cap(b))} · {b.largo + 1} vigas · {b.ancho} puntones{parteDe(b) < 1 ? ` · media batea (máx. ${fmtN(capLog(b))})` : ""}</span>
                             <button onClick={() => abrirEdit(b)}
                               style={{ ...btn(false), padding: "2px 9px", fontSize: 12 }}>Editar</button>
                             <button onClick={() => abrirFlot(b)}
@@ -1458,6 +1469,11 @@ function GestionBatea({ db }) {
                   <Field label="Vigas"><input style={inp} type="number" placeholder="26" value={nb.vigas} onChange={(e) => setNb({ ...nb, vigas: e.target.value })} /></Field>
                   <Field label="Puntones"><input style={inp} type="number" placeholder="20" value={nb.puntones} onChange={(e) => setNb({ ...nb, puntones: e.target.value })} /></Field>
                 </div>
+                <Field label="Gestión">
+                  <select style={inp} value={nb.parte} onChange={(e) => setNb({ ...nb, parte: parseFloat(e.target.value) })}>
+                    <option value={1}>Batea entera (600 cuerdas)</option><option value={0.5}>Media batea (300 cuerdas)</option>
+                  </select>
+                </Field>
                 <button style={btn(true)} onClick={addBatea}>Añadir batea</button>
               </div>
             </div>
@@ -1861,7 +1877,7 @@ function GestionBatea({ db }) {
           const ventasR = ventas.filter((x) =>
             (!fr.desde || x.fecha >= fr.desde) && (!fr.hasta || x.fecha <= fr.hasta) && enB(fr.bateas, x.bateaId));
           const stockTot = (c) => bateas.reduce((s, b) => s + stock(b, c), 0);
-          const capTot = bateas.length * capLog();
+          const capTot = bateas.reduce((s, b) => s + capLog(b), 0);
           const ocupTot = bateas.reduce((s, b) => s + ocup(b), 0);
           const kpis = [
             ["Cuerdas de venta listas (hoy)", fmtN(stockTot("venta")), C.foam],
@@ -1937,7 +1953,7 @@ function GestionBatea({ db }) {
                       <td style={{ padding: "7px 8px", color: C.pink }}>{fmtN(stock(b, "desdoble"))}</td>
                       <td style={{ padding: "7px 8px", color: C.foam }}>{fmtN(stock(b, "venta"))}</td>
                       <td style={{ padding: "7px 8px", color: exceso(b).length ? C.warn : C.text }}>{fmtN(ocup(b))}</td>
-                      <td style={{ padding: "7px 8px", color: C.mut }}>{fmtN(capLog())}</td>
+                      <td style={{ padding: "7px 8px", color: C.mut }}>{fmtN(capLog(b))}{parteDe(b) < 1 ? " (media)" : ""}</td>
                     </tr>
                   ))}
                 </tbody>

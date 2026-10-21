@@ -94,6 +94,8 @@ El objeto batea (`nuevaBatea`) usa claves `"claro-puntón-mitad"`, que se leen a
   hueco de su mismo claro, o a `extra` si no cabe.
 - `mont[k]` = cuerdas amontonadas en ese punto. Ausente = una, que es lo normal;
   solo guarda los puntos que hay que rarear. `cant(b,k)` lo lee siempre por aquí.
+- `parte` = `1` (batea entera, por defecto) o `0.5` (media batea gestionada). Escala los
+  límites normativos (`limProd`, `limCol`, `capLog(b)`: 600 → 300); no toca el plano.
 - `extra[cat]` = cuerdas registradas sin sitio en el plano. Ya solo se usa si al
   colocar no se marcó ningún punto: lo que sobra se amontona sobre lo marcado.
 
