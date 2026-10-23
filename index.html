@@ -1455,7 +1455,7 @@ function GestionBatea({ db }) {
                             (hasta {Math.max(...montones(b).map((k) => cant(b, k)))} en uno) — usa Recolocar para rarearlas.</Warn>
                         )}
                         {alEdad.map((a) => (
-                          <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${a.antigua})` : ""} — {MENSAJE_ALERTA[a.cat]}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
+                          <Warn key={a.cat}>{fmtN(a.vencidas)} {CAT[a.cat].label} con más de {a.lim} meses{a.antigua ? ` (desde ${fmtF(a.antigua)})` : ""} — {MENSAJE_ALERTA[a.cat]}.{a.sinFecha ? ` · ${fmtN(a.sinFecha)} más sin fecha conocida.` : ""}</Warn>
                         ))}
                       </div>
                     )}
@@ -1491,7 +1491,7 @@ function GestionBatea({ db }) {
                 if (lid === "init") return "cuerdas iniciales (sin lote registrado)";
                 if (lid === "extra") return "cuerdas que ya estaban sin ubicar";
                 const o2 = ops.find((x) => x.id === +lid);
-                return o2 ? `${TIPO_LABEL[o2.tipo]} · ${o2.fecha} · ${bn(o2.bateaId)}` : `lote #${lid}`;
+                return o2 ? `${TIPO_LABEL[o2.tipo]} · ${fmtF(o2.fecha)} · ${bn(o2.bateaId)}` : `lote #${lid}`;
               };
               const origen = Object.entries(opL.origenLotes || {});
               const destino = ops.filter((x) => x.origenLotes && x.origenLotes[opL.id]).map((x) => ({ op: x, n: x.origenLotes[opL.id] }));
@@ -1505,7 +1505,7 @@ function GestionBatea({ db }) {
                 <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                     <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
-                      Ficha de lote — {TIPO_LABEL[opL.tipo]} · {opL.fecha} · {bn(opL.bateaId)}
+                      Ficha de lote — {TIPO_LABEL[opL.tipo]} · {fmtF(opL.fecha)} · {bn(opL.bateaId)}
                     </h2>
                     <button style={mini()} onClick={() => setVerLote(null)}>Cerrar</button>
                   </div>
@@ -1520,7 +1520,7 @@ function GestionBatea({ db }) {
                   {destino.length ? (
                     <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 13 }}>
                       {destino.map(({ op: x, n }) => (
-                        <li key={x.id}>{fmtN(n)} cuerdas → {TIPO_LABEL[x.tipo]} · {x.fecha} · {bn(x.bateaId)}{" "}
+                        <li key={x.id}>{fmtN(n)} cuerdas → {TIPO_LABEL[x.tipo]} · {fmtF(x.fecha)} · {bn(x.bateaId)}{" "}
                           <button style={mini()} onClick={() => setVerLote(x.id)}>ver</button>
                         </li>
                       ))}
@@ -1672,7 +1672,7 @@ function GestionBatea({ db }) {
                         <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
                           {editOp?.id === o.id
                             ? <input style={{ ...inp, padding: "4px 6px", width: 130 }} type="date" max={hoy()} value={editOp.fecha} onChange={(e) => setEditOp({ ...editOp, fecha: e.target.value })} />
-                            : o.fecha}
+                            : fmtF(o.fecha)}
                         </td>
                         <td style={{ padding: "7px 8px", textTransform: "capitalize" }}>{o.tipo}</td>
                         <td style={{ padding: "7px 8px" }}>{bn(o.bateaId)}</td>
@@ -1810,7 +1810,7 @@ function GestionBatea({ db }) {
                     return (
                     <tr key={x.id} style={{ borderBottom: `1px solid ${C.line}` }}>
                       <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
-                        {ed ? <input style={{ ...cIn, width: 130 }} type="date" max={hoy()} value={editV.fecha} onChange={(e) => setEditV({ ...editV, fecha: e.target.value })} /> : x.fecha}
+                        {ed ? <input style={{ ...cIn, width: 130 }} type="date" max={hoy()} value={editV.fecha} onChange={(e) => setEditV({ ...editV, fecha: e.target.value })} /> : fmtF(x.fecha)}
                       </td>
                       <td style={{ padding: "7px 8px" }}>
                         {ed
@@ -1841,7 +1841,7 @@ function GestionBatea({ db }) {
                           color: x.estado === "cobrado" ? C.foam : C.warn,
                           padding: "3px 12px", fontSize: 12,
                         }}>{x.estado}</button>
-                        {x.estado === "cobrado" && x.fechaCobro && <div style={{ color: C.mut, fontSize: 11, marginTop: 3 }}>{x.fechaCobro}</div>}
+                        {x.estado === "cobrado" && x.fechaCobro && <div style={{ color: C.mut, fontSize: 11, marginTop: 3 }}>{fmtF(x.fechaCobro)}</div>}
                       </td>
                       <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>
                         {ed ? (
@@ -1922,7 +1922,7 @@ function GestionBatea({ db }) {
                   <>
                     <p style={{ color: C.mut, fontSize: 13, margin: "0 0 10px" }}>
                       {fmtN(opsR.length)} {opsR.length === 1 ? "operación" : "operaciones"}
-                      {fr.desde || fr.hasta ? ` · ${fr.desde || "el principio"} → ${fr.hasta || "hoy"}` : " · todas las fechas"}
+                      {fr.desde || fr.hasta ? ` · ${fmtF(fr.desde) || "el principio"} → ${fmtF(fr.hasta) || "hoy"}` : " · todas las fechas"}
                     </p>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       {[["siembra", C.rope], ["desdoble", C.pink], ["venta", C.foam], ["movimiento", C.mut], ["ajuste", C.mut]]
@@ -1992,7 +1992,7 @@ function GestionBatea({ db }) {
                           <td style={{ padding: "7px 8px" }}>{f.b.nombre}</td>
                           <td style={{ padding: "7px 8px", color: CAT[f.cat].color }}>{CAT[f.cat].label}</td>
                           <td style={{ padding: "7px 8px", color: C.warn }}>{fmtN(f.vencidas)}</td>
-                          <td style={{ padding: "7px 8px" }}>{f.antigua || "—"}</td>
+                          <td style={{ padding: "7px 8px" }}>{fmtF(f.antigua) || "—"}</td>
                           <td style={{ padding: "7px 8px", color: C.mut }}>{f.lim} meses</td>
                           <td style={{ padding: "7px 8px", color: C.mut }}>{f.sinFecha ? fmtN(f.sinFecha) : "—"}</td>
                         </tr>
