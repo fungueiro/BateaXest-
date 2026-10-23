@@ -1789,7 +1789,7 @@ function GestionBatea({ db }) {
                 <button style={btn(false)} onClick={() => setFv({ desde: "", hasta: "", estado: "", q: "", modo: "", cobroDesde: "", cobroHasta: "" })}>Limpiar</button>
                 <button style={btn(false)} onClick={() => descargarCSV("ventas.csv",
                   ["Fecha", "Modo", "Sacos", "Kg brutos", "Descuento %", "€/kg", "Total", "Persona", "Comprador", "Estado", "Fecha cobro"],
-                  ventasF.map((x) => [x.fecha, x.modo, x.sacos || "", x.kgBrutos || "", x.desct || "", x.eurkg, x.total.toFixed(2), x.persona, x.comprador, x.estado, x.fechaCobro || ""]))}>
+                  ventasF.map((x) => [fmtF(x.fecha), x.modo, x.sacos || "", x.kgBrutos || "", x.desct || "", x.eurkg, x.total.toFixed(2), x.persona, x.comprador, x.estado, fmtF(x.fechaCobro) || ""]))}>
                   Exportar CSV
                 </button>
               </div>
@@ -2062,7 +2062,7 @@ function GestionBatea({ db }) {
                 <button style={btn(false)} onClick={() => setFa({ desde: "", hasta: "", bateas: [], modo: "" })}>Limpiar</button>
                 <button style={btn(false)} onClick={() => descargarCSV("analisis_ventas.csv",
                   ["Fecha", "Batea", "Modo", "Cuerdas", "Kg", "€ base", "€ total", "Nota"],
-                  vops.map((o) => [o.fecha, bn(o.bateaId), o.vmodo, o.n, dec(kgOp(o), 2), (o.base || 0).toFixed(2), totalVenta(o.base || 0).toFixed(2), o.nota || ""]))}>
+                  vops.map((o) => [fmtF(o.fecha), bn(o.bateaId), o.vmodo, o.n, dec(kgOp(o), 2), (o.base || 0).toFixed(2), totalVenta(o.base || 0).toFixed(2), o.nota || ""]))}>
                   Exportar CSV
                 </button>
               </div>
