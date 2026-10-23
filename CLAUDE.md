@@ -105,7 +105,7 @@ donde se siembra/ajusta/vende) y `dest: [{bateaId, n}]` (destino en movimiento y
 compatibilidad. Léelas siempre con `origOp`, `destOp` e `idsOp`: las operaciones antiguas
 solo tienen `bateaId`/`bateaDestId`. Al colocar, cada batea es una fase (primero se
 levanta todo, luego se pone). En Análisis, una carga de varias bateas se reparte entre
-ellas en proporción a sus cuerdas.
+ellas en proporción a sus cuerdas, también en las cifras globales al filtrar por batea.
 
 `cap(b)` = `ancho × largo × 2 − puntos anulados`, que son **puntos de amarre**, no
 cuerdas: amontonando caben más. `nCeldas` cuenta cuerdas, sumando los montones.
