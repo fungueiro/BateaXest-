@@ -106,6 +106,14 @@ const exceso = (b) => {
 };
 const capLog = (b) => limProd(b) + limCol(b); // tope lógico de cuerdas: 600 entera, 300 media
 const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, mont: { ...b.mont }, extra: { ...b.extra } }));
+// Reparto de una operación por bateas: [{ bateaId, n }]. "orig" es la batea de la
+// operación (de donde salen, o donde se siembra/ajusta); "dest", donde se ponen en
+// movimiento y desdoble. Las operaciones antiguas solo tienen bateaId/bateaDestId.
+const CON_DEST = ["movimiento", "desdoble"];
+const origOp = (o) => o.orig?.length ? o.orig : [{ bateaId: o.bateaId, n: o.n }];
+const destOp = (o) => o.dest?.length ? o.dest
+  : CON_DEST.includes(o.tipo) ? [{ bateaId: o.bateaDestId, n: o.tipo === "desdoble" ? o.nDest : o.n }] : [];
+const idsOp = (o) => [...origOp(o), ...destOp(o)].map((r) => r.bateaId);
 const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
 // Alertas de manejo por antigüedad: valores por defecto, ajustables desde la app (Resumen)
 const LIM_MESES_DEFECTO = { colectora: 8, desdoble: 12, venta: 3 };
@@ -156,6 +164,28 @@ const mini = (color) => ({ background: "transparent", border: `1px solid ${color
 const Field = ({ label, children, w }) => (
   <div style={{ flex: 1, minWidth: w || 130 }}><label style={lbl}>{label}</label>{children}</div>
 );
+// Varias bateas en una misma operación: una fila por batea con sus cuerdas.
+const RepartoBateas = ({ label, filas, setFilas, bateas, ph }) => {
+  const cambia = (i, campo, v) => setFilas(filas.map((f, j) => j === i ? { ...f, [campo]: v } : f));
+  const libre = bateas.find((b) => !filas.some((f) => +f.bateaId === b.id));
+  return (
+    <div style={{ flex: "1 1 100%" }}>
+      <label style={lbl}>{label}</label>
+      {filas.map((f, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+          <select style={{ ...inp, flex: 2 }} value={f.bateaId} onChange={(e) => cambia(i, "bateaId", e.target.value)}>
+            {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+          </select>
+          <input style={{ ...inp, flex: 1 }} type="number" min="1" placeholder={ph} aria-label="Nº cuerdas"
+            value={f.n} onChange={(e) => cambia(i, "n", e.target.value)} />
+          {filas.length > 1 && <button style={mini()} onClick={() => setFilas(filas.filter((_, j) => j !== i))} aria-label="Quitar batea">✕</button>}
+        </div>
+      ))}
+      {libre && <button style={mini()} onClick={() => setFilas([...filas, { bateaId: libre.id, n: "" }])}>+ otra batea</button>}
+      {filas.length > 1 && <span style={{ fontSize: 12, color: C.mut, marginLeft: 10 }}>Total: {filas.reduce((s, f) => s + (parseInt(f.n) || 0), 0)} cuerdas</span>}
+    </div>
+  );
+};
 // Estos dos viven fuera del componente a propósito: definidos dentro, React los
 // recrea en cada render y desmonta los campos, así que el selector de fecha se
 // cerraba a cada pulsación y no se podía escribir en él.
@@ -686,6 +716,9 @@ function GestionBatea({ db }) {
   const flash = (m) => { setAviso(m); setTimeout(() => setAviso(""), 4500); };
   const bx = (id) => bateas.find((b) => b.id === +id);
   const bn = (id) => bx(id)?.nombre || "—";
+  // Bateas de una operación, con sus cuerdas si son varias: "B1 (40), B2 (60)".
+  const bnReparto = (rs) => rs.map((r) => rs.length > 1 ? `${bn(r.bateaId)} (${fmtN(r.n)})` : bn(r.bateaId)).join(", ");
+  const bnOp = (o) => bnReparto(origOp(o));
   const [personas, setPersonas] = useState(["Román"]);
   const [compradores, setCompradores] = useState(["Udana"]);
   const [catAbierto, setCatAbierto] = useState(false);
@@ -945,21 +978,23 @@ function GestionBatea({ db }) {
 
   // ── Formulario de operación ──
   const [op, setOp] = useState({
-    tipo: "siembra", fecha: hoy(), bateaId: 1, bateaDestId: 2,
-    cat: "colectora", catDest: "desdoble", n: "", nDest: "", nota: "", dir: "quitar",
+    tipo: "siembra", fecha: hoy(), orig: [{ bateaId: 1, n: "" }], dest: [{ bateaId: 2, n: "" }],
+    cat: "colectora", catDest: "desdoble", nota: "", dir: "quitar",
     vmodo: "sacos", vsacos: "", vkg: "", vdesct: "", veur: "", vpersona: "", vcomprador: "",
   });
   // El desplegable de batea guarda un id fijo (1/2 por defecto). Si esas bateas no existen
   // (datos propios cargados de la nube), el id queda "colgado" y provoca errores al operar.
-  // Este efecto reengancha bateaId/bateaDestId a bateas reales cuando cambia la lista.
+  // Este efecto reengancha las filas de bateas a bateas reales cuando cambia la lista.
   useEffect(() => {
     if (!bateas.length) return;
     const ids = bateas.map((b) => b.id);
+    const arregla = (fs, def) => {
+      const ok = fs.filter((f) => ids.includes(+f.bateaId));
+      return ok.length === fs.length ? fs : ok.length ? ok : [{ bateaId: def, n: fs[0]?.n ?? "" }];
+    };
     setOp((o) => {
-      let n = o;
-      if (!ids.includes(+o.bateaId)) n = { ...n, bateaId: bateas[0].id };
-      if (!ids.includes(+n.bateaDestId)) n = { ...n, bateaDestId: (bateas[1] || bateas[0]).id };
-      return n;
+      const orig = arregla(o.orig, bateas[0].id), dest = arregla(o.dest, (bateas[1] || bateas[0]).id);
+      return orig === o.orig && dest === o.dest ? o : { ...o, orig, dest };
     });
   }, [bateas]);
 
@@ -1002,12 +1037,25 @@ function GestionBatea({ db }) {
   };
 
   const registrarLote = () => {
-    const n = parseInt(op.n), nD = parseInt(op.nDest || op.n);
-    if (!n || n <= 0) return flash("Cantidad inválida.");
     if (!op.fecha || op.fecha > hoy()) return flash("Fecha inválida: no puede estar vacía ni ser futura.");
-    if (!bx(op.bateaId)) return flash("Selecciona una batea de origen válida.");
-    if (["movimiento", "desdoble"].includes(op.tipo) && !bx(op.bateaDestId)) return flash("Selecciona una batea de destino válida.");
-    const o = { ...op, id: Date.now(), n, nDest: nD, bateaId: +op.bateaId, bateaDestId: +op.bateaDestId };
+    const conDest = CON_DEST.includes(op.tipo);
+    const orig = op.orig.map((f) => ({ bateaId: +f.bateaId, n: parseInt(f.n) }));
+    if (orig.some((f) => !bx(f.bateaId))) return flash("Selecciona bateas válidas.");
+    if (orig.some((f) => !(f.n > 0))) return flash("Cantidad inválida: pon las cuerdas de cada batea.");
+    if (new Set(orig.map((f) => f.bateaId)).size < orig.length) return flash("Hay una batea repetida.");
+    const n = orig.reduce((s, f) => s + f.n, 0);
+    let dest = [];
+    if (conDest) {
+      // Con una sola batea de destino y sin cantidad, recibe todo (en desdoble, tantas como salen).
+      dest = op.dest.map((f) => ({ bateaId: +f.bateaId, n: op.dest.length === 1 && !f.n ? n : parseInt(f.n) }));
+      if (dest.some((f) => !bx(f.bateaId))) return flash("Selecciona bateas de destino válidas.");
+      if (dest.some((f) => !(f.n > 0))) return flash("Cantidad inválida: pon las cuerdas de cada batea de destino.");
+      if (new Set(dest.map((f) => f.bateaId)).size < dest.length) return flash("Hay una batea de destino repetida.");
+    }
+    const nD = dest.reduce((s, f) => s + f.n, 0);
+    if (op.tipo === "movimiento" && nD !== n) return flash(`Salen ${n} cuerdas y llegan ${nD}: en un movimiento deben ser las mismas.`);
+    const o = { ...op, id: Date.now(), n, nDest: nD, orig, dest,
+      bateaId: orig[0].bateaId, bateaDestId: dest[0]?.bateaId ?? null };
     let fases;
     if (o.tipo === "venta") {
       const e = parseFloat(o.veur) || 0;
@@ -1015,17 +1063,13 @@ function GestionBatea({ db }) {
         ? (parseFloat(o.vsacos) || 0) * 10 * e
         : (parseFloat(o.vkg) || 0) * (1 - (parseFloat(o.vdesct) || 0) / 100) * e;
       if (o.base <= 0) return flash("Faltan datos de la venta (cantidad y €/kg).");
-      fases = [{ modo: "quitar", bateaId: o.bateaId, cat: "venta", n }];
+      fases = orig.map((f) => ({ modo: "quitar", bateaId: f.bateaId, cat: "venta", n: f.n }));
     }
-    else if (o.tipo === "siembra") fases = [{ modo: "poner", bateaId: o.bateaId, cat: o.cat, n }];
-    else if (o.tipo === "ajuste") fases = [{ modo: o.dir, bateaId: o.bateaId, cat: o.cat, n }];
-    else if (o.tipo === "movimiento") fases = [
-      { modo: "quitar", bateaId: o.bateaId, cat: o.cat, n },
-      { modo: "poner", bateaId: o.bateaDestId, cat: o.cat, n },
-    ];
-    else fases = [ // desdoble: batea origen y destino independientes
-      { modo: "quitar", bateaId: o.bateaId, cat: o.cat, n },
-      { modo: "poner", bateaId: o.bateaDestId, cat: o.catDest, n: nD },
+    else if (o.tipo === "siembra") fases = orig.map((f) => ({ modo: "poner", bateaId: f.bateaId, cat: o.cat, n: f.n }));
+    else if (o.tipo === "ajuste") fases = orig.map((f) => ({ modo: o.dir, bateaId: f.bateaId, cat: o.cat, n: f.n }));
+    else fases = [ // movimiento y desdoble: primero se levanta todo, luego se pone
+      ...orig.map((f) => ({ modo: "quitar", bateaId: f.bateaId, cat: o.cat, n: f.n })),
+      ...dest.map((f) => ({ modo: "poner", bateaId: f.bateaId, cat: o.tipo === "desdoble" ? o.catDest : o.cat, n: f.n })),
     ];
     // Quitar más de lo que existe: imposible físicamente → se bloquea (no es sobrecapacidad).
     for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < f.n)
@@ -1157,17 +1201,18 @@ function GestionBatea({ db }) {
       if (o.tipo === "venta") {
         ventaId = Date.now() + 1;
         setVentas((vs) => [{
-          id: ventaId, opId: o.id, bateaId: o.bateaId, fecha: o.fecha, modo: o.vmodo, sacos: o.vsacos, kgBrutos: o.vkg,
+          id: ventaId, opId: o.id, bateaId: o.bateaId, bateaIds: o.orig.map((f) => f.bateaId), fecha: o.fecha, modo: o.vmodo, sacos: o.vsacos, kgBrutos: o.vkg,
           desct: o.vdesct, eurkg: o.veur, persona: o.vpersona, comprador: o.vcomprador,
           estado: "pendiente", base: o.base, total: totalVenta(o.base),
         }, ...vs]);
         addCatalogo(setPersonas, o.vpersona);
         addCatalogo(setCompradores, o.vcomprador);
       }
-      setHistorial((h) => [...h.slice(-(MAX_UNDO - 1)), { label: `${TIPO_LABEL[o.tipo]} — ${bn(o.bateaId)}`, bateas: pend.snap, ops, ventas }]);
+      setHistorial((h) => [...h.slice(-(MAX_UNDO - 1)), { label: `${TIPO_LABEL[o.tipo]} — ${bnOp(o)}`, bateas: pend.snap, ops, ventas }]);
       setOps([o, ...ops]);
       setPend(null);
-      setOp({ ...op, n: "", nDest: "", nota: "", vsacos: "", vkg: "", vdesct: "", veur: "" });
+      const sinN = (fs) => fs.map((f) => ({ ...f, n: "" }));
+      setOp({ ...op, orig: sinN(op.orig), dest: sinN(op.dest), nota: "", vsacos: "", vkg: "", vdesct: "", veur: "" });
       // Aviso de límite lógico superado en las bateas tocadas por la operación
       const tocadas = [...new Set(pend.fases.map((x) => x.bateaId))];
       const avisos = tocadas.flatMap((id) => exceso(bs.find((x) => x.id === id)).map((e) => `${bs.find((x) => x.id === id).nombre}: ${fmtN(e.actual)} ${e.tipo} (máx. ${fmtN(e.lim)}, +${fmtN(e.n)})`));
@@ -1202,7 +1247,7 @@ function GestionBatea({ db }) {
   const opsF = ops.filter((o) =>
     (!fo.desde || o.fecha >= fo.desde) && (!fo.hasta || o.fecha <= fo.hasta) &&
     (!fo.tipo || o.tipo === fo.tipo) &&
-    (!fo.bateaId || o.bateaId === +fo.bateaId || (["movimiento", "desdoble"].includes(o.tipo) && o.bateaDestId === +fo.bateaId)));
+    (!fo.bateaId || idsOp(o).includes(+fo.bateaId)));
   const [fv, setFv] = useState({ desde: "", hasta: "", estado: "", q: "", modo: "", cobroDesde: "", cobroHasta: "" });
   const ventasF = ventas.filter((x) =>
     (!fv.desde || x.fecha >= fv.desde) && (!fv.hasta || x.fecha <= fv.hasta) &&
@@ -1491,7 +1536,7 @@ function GestionBatea({ db }) {
                 if (lid === "init") return "cuerdas iniciales (sin lote registrado)";
                 if (lid === "extra") return "cuerdas que ya estaban sin ubicar";
                 const o2 = ops.find((x) => x.id === +lid);
-                return o2 ? `${TIPO_LABEL[o2.tipo]} · ${fmtF(o2.fecha)} · ${bn(o2.bateaId)}` : `lote #${lid}`;
+                return o2 ? `${TIPO_LABEL[o2.tipo]} · ${fmtF(o2.fecha)} · ${bnOp(o2)}` : `lote #${lid}`;
               };
               const origen = Object.entries(opL.origenLotes || {});
               const destino = ops.filter((x) => x.origenLotes && x.origenLotes[opL.id]).map((x) => ({ op: x, n: x.origenLotes[opL.id] }));
@@ -1505,7 +1550,7 @@ function GestionBatea({ db }) {
                 <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18, marginBottom: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                     <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
-                      Ficha de lote — {TIPO_LABEL[opL.tipo]} · {fmtF(opL.fecha)} · {bn(opL.bateaId)}
+                      Ficha de lote — {TIPO_LABEL[opL.tipo]} · {fmtF(opL.fecha)} · {bnOp(opL)}
                     </h2>
                     <button style={mini()} onClick={() => setVerLote(null)}>Cerrar</button>
                   </div>
@@ -1520,7 +1565,7 @@ function GestionBatea({ db }) {
                   {destino.length ? (
                     <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 13 }}>
                       {destino.map(({ op: x, n }) => (
-                        <li key={x.id}>{fmtN(n)} cuerdas → {TIPO_LABEL[x.tipo]} · {fmtF(x.fecha)} · {bn(x.bateaId)}{" "}
+                        <li key={x.id}>{fmtN(n)} cuerdas → {TIPO_LABEL[x.tipo]} · {fmtF(x.fecha)} · {bnOp(x)}{" "}
                           <button style={mini()} onClick={() => setVerLote(x.id)}>ver</button>
                         </li>
                       ))}
@@ -1561,18 +1606,6 @@ function GestionBatea({ db }) {
                   </Field>
                 )}
                 <Field label="Fecha"><input style={inp} type="date" max={hoy()} value={op.fecha} onChange={(e) => setOp({ ...op, fecha: e.target.value })} /></Field>
-                <Field label={["movimiento", "desdoble"].includes(op.tipo) ? "Batea origen" : "Batea"}>
-                  <select style={inp} value={op.bateaId} onChange={(e) => setOp({ ...op, bateaId: e.target.value })}>
-                    {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-                  </select>
-                </Field>
-                {["movimiento", "desdoble"].includes(op.tipo) && (
-                  <Field label="Batea destino">
-                    <select style={inp} value={op.bateaDestId} onChange={(e) => setOp({ ...op, bateaDestId: e.target.value })}>
-                      {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-                    </select>
-                  </Field>
-                )}
                 {op.tipo !== "venta" && (
                   <Field label={op.tipo === "desdoble" ? "Cuerda origen" : "Tipo de cuerda"}>
                     <select style={inp} value={op.cat} onChange={(e) => setOp({ ...op, cat: e.target.value })}>
@@ -1580,20 +1613,19 @@ function GestionBatea({ db }) {
                     </select>
                   </Field>
                 )}
-                <Field label={op.tipo === "desdoble" ? "Cuerdas origen" : "Nº cuerdas"}>
-                  <input style={inp} type="number" min="1" placeholder="50" value={op.n} onChange={(e) => setOp({ ...op, n: e.target.value })} />
-                </Field>
                 {op.tipo === "desdoble" && (
-                  <>
-                    <Field label="Cuerda resultado">
-                      <select style={inp} value={op.catDest} onChange={(e) => setOp({ ...op, catDest: e.target.value })}>
-                        {CATS.map((c) => <option key={c} value={c}>{CAT[c].label}</option>)}
-                      </select>
-                    </Field>
-                    <Field label="Cuerdas resultantes">
-                      <input style={inp} type="number" min="1" placeholder="100" value={op.nDest} onChange={(e) => setOp({ ...op, nDest: e.target.value })} />
-                    </Field>
-                  </>
+                  <Field label="Cuerda resultado">
+                    <select style={inp} value={op.catDest} onChange={(e) => setOp({ ...op, catDest: e.target.value })}>
+                      {CATS.map((c) => <option key={c} value={c}>{CAT[c].label}</option>)}
+                    </select>
+                  </Field>
+                )}
+                <RepartoBateas bateas={bateas} filas={op.orig} setFilas={(orig) => setOp({ ...op, orig })} ph="50"
+                  label={CON_DEST.includes(op.tipo) ? "Bateas de origen · cuerdas levantadas" : op.tipo === "siembra" ? "Bateas · cuerdas sembradas" : "Bateas · nº cuerdas"} />
+                {CON_DEST.includes(op.tipo) && (
+                  <RepartoBateas bateas={bateas} filas={op.dest} setFilas={(dest) => setOp({ ...op, dest })}
+                    ph={op.dest.length === 1 ? "todas" : "50"}
+                    label={op.tipo === "desdoble" ? "Bateas de destino · cuerdas resultantes" : "Bateas de destino · cuerdas"} />
                 )}
                 {op.tipo === "venta" && (
                   <>
@@ -1663,9 +1695,9 @@ function GestionBatea({ db }) {
                     const det = o.tipo === "ajuste"
                       ? `${o.dir === "poner" ? "+" : "−"}${o.n} ${CAT[o.cat].label}`
                       : o.tipo === "desdoble"
-                      ? `${o.n} ${CAT[o.cat].label} → ${o.nDest} ${CAT[o.catDest].label} en ${bn(o.bateaDestId)}`
+                      ? `${o.n} ${CAT[o.cat].label} → ${o.nDest} ${CAT[o.catDest].label} en ${bnReparto(destOp(o))}`
                       : o.tipo === "movimiento"
-                        ? `${o.n} ${CAT[o.cat].label} → ${bn(o.bateaDestId)}`
+                        ? `${o.n} ${CAT[o.cat].label} → ${bnReparto(destOp(o))}`
                         : `${o.n} ${o.tipo === "venta" ? "cuerdas de venta" : CAT[o.cat].label}`;
                     return (
                       <tr key={o.id} style={{ borderBottom: `1px solid ${C.line}` }}>
@@ -1675,7 +1707,7 @@ function GestionBatea({ db }) {
                             : fmtF(o.fecha)}
                         </td>
                         <td style={{ padding: "7px 8px", textTransform: "capitalize" }}>{o.tipo}</td>
-                        <td style={{ padding: "7px 8px" }}>{bn(o.bateaId)}</td>
+                        <td style={{ padding: "7px 8px" }}>{bnOp(o)}</td>
                         <td style={{ padding: "7px 8px" }}>{det}</td>
                         <td style={{ padding: "7px 8px", color: C.mut }}>
                           {editOp?.id === o.id
@@ -1874,9 +1906,9 @@ function GestionBatea({ db }) {
         {tab === "stats" && (() => {
           const opsR = ops.filter((o) =>
             (!fr.desde || o.fecha >= fr.desde) && (!fr.hasta || o.fecha <= fr.hasta) &&
-            (!fr.tipo || o.tipo === fr.tipo) && enB(fr.bateas, o.bateaId, o.bateaDestId));
+            (!fr.tipo || o.tipo === fr.tipo) && enB(fr.bateas, ...idsOp(o)));
           const ventasR = ventas.filter((x) =>
-            (!fr.desde || x.fecha >= fr.desde) && (!fr.hasta || x.fecha <= fr.hasta) && enB(fr.bateas, x.bateaId));
+            (!fr.desde || x.fecha >= fr.desde) && (!fr.hasta || x.fecha <= fr.hasta) && enB(fr.bateas, ...(x.bateaIds || [x.bateaId])));
           const stockTot = (c) => bateas.reduce((s, b) => s + stock(b, c), 0);
           const capTot = bateas.reduce((s, b) => s + capLog(b), 0);
           const ocupTot = bateas.reduce((s, b) => s + ocup(b), 0);
@@ -2009,7 +2041,7 @@ function GestionBatea({ db }) {
         {tab === "analisis" && (() => {
           const vops = ops.filter((o) => o.tipo === "venta" &&
             (!fa.desde || o.fecha >= fa.desde) && (!fa.hasta || o.fecha <= fa.hasta) &&
-            enB(fa.bateas, o.bateaId) && (!fa.modo || o.vmodo === fa.modo));
+            enB(fa.bateas, ...idsOp(o)) && (!fa.modo || o.vmodo === fa.modo));
           const kgOp = (o) => o.vmodo === "sacos"
             ? (parseFloat(o.vsacos) || 0) * 10
             : (parseFloat(o.vkg) || 0) * (1 - (parseFloat(o.vdesct) || 0) / 100);
@@ -2038,9 +2070,11 @@ function GestionBatea({ db }) {
             ["Facturación", fmtEUR(eur), C.text],
           ];
           const porBatea = bateas.map((b) => {
-            const bo = vops.filter((o) => o.bateaId === b.id);
-            const bc = bo.reduce((s, o) => s + o.n, 0), bk = bo.reduce((s, o) => s + kgOp(o), 0);
-            return { b, n: bo.length, bc, bk, be: bo.reduce((s, o) => s + totalVenta(o.base || 0), 0) };
+            // Una carga de varias bateas se reparte entre ellas según las cuerdas de cada una.
+            const parte = (o) => (origOp(o).find((r) => r.bateaId === b.id)?.n || 0) / (o.n || 1);
+            const bo = vops.filter((o) => parte(o) > 0);
+            const bc = bo.reduce((s, o) => s + o.n * parte(o), 0), bk = bo.reduce((s, o) => s + kgOp(o) * parte(o), 0);
+            return { b, n: bo.length, bc, bk, be: bo.reduce((s, o) => s + totalVenta(o.base || 0) * parte(o), 0) };
           }).filter((r) => r.n > 0);
           const porMes = Object.values(vops.reduce((acc, o) => {
             const m = o.fecha.slice(0, 7);

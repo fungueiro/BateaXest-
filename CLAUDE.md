@@ -99,6 +99,14 @@ El objeto batea (`nuevaBatea`) usa claves `"claro-puntón-mitad"`, que se leen a
 - `extra[cat]` = cuerdas registradas sin sitio en el plano. Ya solo se usa si al
   colocar no se marcó ningún punto: lo que sobra se amontona sobre lo marcado.
 
+Una operación puede tocar **varias bateas**: `orig: [{bateaId, n}]` (de donde salen, o
+donde se siembra/ajusta/vende) y `dest: [{bateaId, n}]` (destino en movimiento y desdoble).
+`n`/`nDest` son los totales y `bateaId`/`bateaDestId` la primera de cada lista, por
+compatibilidad. Léelas siempre con `origOp`, `destOp` e `idsOp`: las operaciones antiguas
+solo tienen `bateaId`/`bateaDestId`. Al colocar, cada batea es una fase (primero se
+levanta todo, luego se pone). En Análisis, una carga de varias bateas se reparte entre
+ellas en proporción a sus cuerdas.
+
 `cap(b)` = `ancho × largo × 2 − puntos anulados`, que son **puntos de amarre**, no
 cuerdas: amontonando caben más. `nCeldas` cuenta cuerdas, sumando los montones.
 
