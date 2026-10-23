@@ -48,6 +48,7 @@ const CATS = Object.keys(CAT);
 const hoy = () => new Date().toISOString().slice(0, 10);
 const fmtEUR = (n) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const fmtN = (n) => n.toLocaleString("es-ES");
+const fmtF = (f) => f ? f.split("-").reverse().join("-") : f; // "aaaa-mm-dd" → "dd-mm-aaaa", solo para mostrar
 const DESCT = 2.19, IVA = 10.5;
 const totalVenta = (b) => b * (1 - DESCT / 100) * (1 + IVA / 100);
 const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -742,7 +743,7 @@ function GestionBatea({ db }) {
     return [
       `${fmtN(n)} ${n === 1 ? "cuerda" : "cuerdas"}${aqui > 1 ? ` (${aqui} en este punto)` : ""}`,
       CAT[cat].label,
-      op ? op.fecha : "lote inicial",
+      op ? fmtF(op.fecha) : "lote inicial",
       op?.nota,
     ].filter(Boolean).join(" · ");
   };
