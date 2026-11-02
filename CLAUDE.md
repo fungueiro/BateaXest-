@@ -129,6 +129,11 @@ sale en los puntos libres o anulados, donde es lo único que hay que decir.
 En el plano, la selección por zona se puede acotar a **las dos** cuerdas, solo **proa**
 o solo **popa**.
 
+Las operaciones reparten por bateas en `orig` / `dest` (`[{ bateaId, n, nota? }]`). Con
+más de una batea en juego, cada fila puede llevar su **nota**, además de la común
+(`o.nota`): `notaEn(o, bateaId)` da la de una batea (destino primero) y `notasTxt(o)` lo
+junta todo para la tabla, la ficha de lote y el CSV.
+
 El panel **Plano** (botón en la tarjeta de la batea) es donde se anulan los puntos y se
 marcan los flotadores.
 
