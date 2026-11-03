@@ -177,15 +177,19 @@ const RepartoBateas = ({ label, filas, setFilas, bateas, ph, notas }) => {
     <div style={{ flex: "1 1 100%" }}>
       <label style={lbl}>{label}</label>
       {filas.map((f, i) => (
-        <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <select style={{ ...inp, flex: 2 }} value={f.bateaId} onChange={(e) => cambia(i, "bateaId", e.target.value)}>
-            {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-          </select>
-          <input style={{ ...inp, flex: 1 }} type="number" min="1" placeholder={ph} aria-label="Nº cuerdas"
-            value={f.n} onChange={(e) => cambia(i, "n", e.target.value)} />
-          {notas && <input style={{ ...inp, flex: "3 1 160px" }} placeholder="Nota de esta batea (opcional)" aria-label="Nota de esta batea"
+        <div key={i} style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select style={{ ...inp, flex: 2, minWidth: 0 }} value={f.bateaId} onChange={(e) => cambia(i, "bateaId", e.target.value)}>
+              {bateas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+            </select>
+            <input style={{ ...inp, flex: 1, minWidth: 0 }} type="number" min="1" placeholder={ph} aria-label="Nº cuerdas"
+              value={f.n} onChange={(e) => cambia(i, "n", e.target.value)} />
+            {filas.length > 1 && <button style={mini()} onClick={() => setFilas(filas.filter((_, j) => j !== i))} aria-label="Quitar batea">✕</button>}
+          </div>
+          {/* Nota de la batea: pequeña y debajo, para no robar sitio a batea y cuerdas. */}
+          {notas && <input style={{ ...inp, marginTop: 3, padding: "3px 8px", fontSize: 12, color: C.mut }}
+            placeholder="nota (opcional)" aria-label="Nota de esta batea"
             value={f.nota || ""} onChange={(e) => cambia(i, "nota", e.target.value)} />}
-          {filas.length > 1 && <button style={mini()} onClick={() => setFilas(filas.filter((_, j) => j !== i))} aria-label="Quitar batea">✕</button>}
         </div>
       ))}
       {libre && <button style={mini()} onClick={() => setFilas([...filas, { bateaId: libre.id, n: "" }])}>+ otra batea</button>}
