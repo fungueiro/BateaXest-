@@ -134,6 +134,13 @@ más de una batea en juego, cada fila puede llevar su **nota**, además de la co
 (`o.nota`): `notaEn(o, bateaId)` da la de una batea (destino primero) y `notasTxt(o)` lo
 junta todo para la tabla, la ficha de lote y el CSV.
 
+Una misma batea puede salir **varias veces** en el reparto (p. ej. un desdoble que da
+venta escogida y venta pequeña en la misma batea). Para distinguirlas, cada cuerda
+colocada guarda `b.fila[k]` = el índice de su fila en `filasPon(o)` (`dest` en
+movimiento/desdoble, `orig` en siembra/ajuste), **solo** cuando la batea se repite.
+`fila` viaja con la cuerda como `lotes` (mover, anular, editar, retirar) y entra en el
+borde de lote del plano, en `cuerdasLote(b, cat, lote, fila)` y en `notaEn(o, id, fila)`.
+
 El panel **Plano** (botón en la tarjeta de la batea) es donde se anulan los puntos y se
 marcan los flotadores.
 

@@ -64,7 +64,7 @@ const descargarCSV = (nombre, headers, rows) => {
 // ─── Utilidades batea ─────────────────────────────────────────────────────
 // celdas: { "fila-col": categoria } · extra: cuerdas sin ubicar por categoría
 const nuevaBatea = (id, nombre, ancho, largo) => ({
-  id, nombre, ancho, largo, celdas: {}, lotes: {}, bloq: {}, mont: {},
+  id, nombre, ancho, largo, celdas: {}, lotes: {}, fila: {}, bloq: {}, mont: {},
   extra: { colectora: 0, desdoble: 0, venta: 0 },
 });
 // Cuántas cuerdas hay amontonadas en un punto. Lo normal es una: `mont` solo guarda
@@ -73,8 +73,10 @@ const cant = (b, k) => (b.celdas[k] ? Math.max(1, b.mont?.[k] || 1) : 0);
 // Cuántas cuerdas de un lote quedan en la batea. El lote es la operación que las
 // sembró, y de ella salen la fecha y las observaciones. Se cuenta por lote Y clase
 // porque "init" —lo que ya estaba antes de llevar registro— agrupa de varias.
-const cuerdasLote = (b, cat, lote) => Object.entries(b.celdas)
-  .reduce((s, [k, c]) => s + (c === cat && (b.lotes?.[k] ?? "init") === lote ? cant(b, k) : 0), 0);
+// Con `fila` cuenta solo las de esa fila del reparto (la misma batea dos veces en una
+// operación, p. ej. venta escogida y venta pequeña de un mismo desdoble).
+const cuerdasLote = (b, cat, lote, fila) => Object.entries(b.celdas)
+  .reduce((s, [k, c]) => s + (c === cat && (b.lotes?.[k] ?? "init") === lote && (fila == null || b.fila?.[k] === fila) ? cant(b, k) : 0), 0);
 const montones = (b) => Object.keys(b.celdas).filter((k) => cant(b, k) > 1);
 const amontonadas = (b) => montones(b).reduce((s, k) => s + cant(b, k) - 1, 0);
 // Dos cuerdas por puntón en cada claro —la de proa y la de popa—, menos los puntos
@@ -105,7 +107,7 @@ const exceso = (b) => {
   return av;
 };
 const capLog = (b) => limProd(b) + limCol(b); // tope lógico de cuerdas: 600 entera, 300 media
-const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, bloq: { ...b.bloq }, mont: { ...b.mont }, extra: { ...b.extra } }));
+const clon = (bs) => bs.map((b) => ({ ...b, celdas: { ...b.celdas }, lotes: { ...b.lotes }, fila: { ...b.fila }, bloq: { ...b.bloq }, mont: { ...b.mont }, extra: { ...b.extra } }));
 // Reparto de una operación por bateas: [{ bateaId, n }]. "orig" es la batea de la
 // operación (de donde salen, o donde se siembra/ajusta); "dest", donde se ponen en
 // movimiento y desdoble. Las operaciones antiguas solo tienen bateaId/bateaDestId.
@@ -116,8 +118,13 @@ const destOp = (o) => o.dest?.length ? o.dest
 const idsOp = (o) => [...origOp(o), ...destOp(o)].map((r) => r.bateaId);
 // Cada fila del reparto puede llevar su propia nota (p. ej. un desdoble a dos bateas).
 // La de una batea es la de su fila de destino, si la hay, o la de origen.
-const notaEn = (o, bateaId) => (destOp(o).find((r) => r.bateaId === bateaId)?.nota
-  || origOp(o).find((r) => r.bateaId === bateaId)?.nota || "");
+// Si la batea sale repetida, `fila` (guardada en cada cuerda) dice cuál de sus filas es.
+const filasPon = (o) => (CON_DEST.includes(o.tipo) ? destOp(o) : origOp(o));
+const notaEn = (o, bateaId, fila) => {
+  const f = fila != null ? filasPon(o)[fila] : null;
+  if (f?.bateaId === bateaId) return f.nota || "";
+  return destOp(o).find((r) => r.bateaId === bateaId)?.nota || origOp(o).find((r) => r.bateaId === bateaId)?.nota || "";
+};
 const conNota = (f) => { const t = (f.nota || "").trim(); const { nota, ...g } = f; return t ? { ...g, nota: t } : g; };
 const TIPO_LABEL = { siembra: "Siembra", desdoble: "Desdoble", venta: "Venta/cosecha", movimiento: "Movimiento", ajuste: "Ajuste" };
 // Alertas de manejo por antigüedad: valores por defecto, ajustables desde la app (Resumen)
@@ -172,7 +179,8 @@ const Field = ({ label, children, w }) => (
 // Varias bateas en una misma operación: una fila por batea con sus cuerdas.
 const RepartoBateas = ({ label, filas, setFilas, bateas, ph, notas }) => {
   const cambia = (i, campo, v) => setFilas(filas.map((f, j) => j === i ? { ...f, [campo]: v } : f));
-  const libre = bateas.find((b) => !filas.some((f) => +f.bateaId === b.id));
+  // Se puede repetir batea: dos filas en la misma con notas distintas.
+  const libre = bateas.find((b) => !filas.some((f) => +f.bateaId === b.id)) || bateas.find((b) => b.id === +filas[filas.length - 1]?.bateaId) || bateas[0];
   return (
     <div style={{ flex: "1 1 100%" }}>
       <label style={lbl}>{label}</label>
@@ -342,7 +350,7 @@ const migraClaves = (o) => {
   return r;
 };
 const migraBatea = (b) => ({
-  ...b, celdas: migraClaves(b.celdas), lotes: migraClaves(b.lotes), bloq: migraClaves(b.bloq),
+  ...b, celdas: migraClaves(b.celdas), lotes: migraClaves(b.lotes), fila: b.fila || {}, bloq: migraClaves(b.bloq),
   mont: migraClaves(b.mont),
   flot: (b.flot || []).map((f) => (typeof f === "number" ? f : f?.d)).filter((d) => Number.isInteger(d)),
 });
@@ -382,7 +390,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     const PAL = ["#FFD166", "#EF476F", "#06D6A0", "#9b5de5", "#F78C6B", "#4CC9F0"];
     const byCat = {};
     for (const [k, cat] of Object.entries(b.celdas)) {
-      const id = b.lotes?.[k] ?? "init";
+      const id = (b.lotes?.[k] ?? "init") + (b.fila?.[k] != null ? "/" + b.fila[k] : "");
       (byCat[cat] = byCat[cat] || new Set()).add(id);
     }
     const m = {};
@@ -518,7 +526,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
               Array.from({ length: b.ancho }, (_, c) =>
                 MITADES.map((h) => {
                   const k = kCelda(r, c, h), cat = b.celdas[k], blq = b.bloq?.[k];
-                  const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init")] : null;
+                  const ls = cat ? loteStroke[cat + "|" + (b.lotes?.[k] ?? "init") + (b.fila?.[k] != null ? "/" + b.fila[k] : "")] : null;
                   const ok = elegible ? elegible(k, cat, blq) : false;
                   const isSel = sel?.has(k);
                   const monton = cat && Math.max(1, b.mont?.[k] || 1) > 1;
@@ -788,13 +796,14 @@ function GestionBatea({ db }) {
   const loteInfo = (b) => (k, cat) => {
     const lote = b.lotes?.[k] ?? "init";
     const op = ops.find((x) => x.id === lote);
-    const n = cuerdasLote(b, cat, lote), aqui = cant(b, k);
+    const fl = b.fila?.[k];
+    const n = cuerdasLote(b, cat, lote, fl), aqui = cant(b, k);
     return [
       `${fmtN(n)} ${n === 1 ? "cuerda" : "cuerdas"}${aqui > 1 ? ` (${aqui} en este punto)` : ""}`,
       CAT[cat].label,
       op ? fmtF(op.fecha) : "lote inicial",
       op?.nota,
-      op && notaEn(op, b.id),
+      op && notaEn(op, b.id, fl),
     ].filter(Boolean).join(" · ");
   };
 
@@ -820,13 +829,13 @@ function GestionBatea({ db }) {
       if (b.id !== edit.id) return b;
       // Los flotadores se guardan en puntones desde el alero: si la batea se estrecha,
       // los que ya no caben desaparecen y hay que volver a marcarlos.
-      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, parte: edit.parte === 0.5 ? 0.5 : 1, celdas: {}, lotes: {}, bloq: {},
+      const nb = { ...b, nombre: edit.nombre, ancho: a, largo: l, parte: edit.parte === 0.5 ? 0.5 : 1, celdas: {}, lotes: {}, fila: {}, bloq: {},
         flot: flotDe(b).filter((d) => d < Math.max(1, Math.floor(a / 2))),
         extra: { ...b.extra } };
       let fuera = 0, flotFuera = 0;
       for (const [k, cat] of Object.entries(b.celdas)) {
         const { r, c } = leeK(k);
-        if (r < l && c < a) { nb.celdas[k] = cat; if (b.lotes?.[k]) nb.lotes[k] = b.lotes[k]; }
+        if (r < l && c < a) { nb.celdas[k] = cat; if (b.lotes?.[k]) nb.lotes[k] = b.lotes[k]; if (b.fila?.[k] != null) nb.fila[k] = b.fila[k]; }
         else { nb.extra[cat]++; fuera++; }
       }
       for (const k of Object.keys(b.bloq || {})) {
@@ -897,9 +906,11 @@ function GestionBatea({ db }) {
   const mover = (b, from, to) => {
     b.celdas[to] = b.celdas[from];
     if (b.lotes?.[from] != null) b.lotes[to] = b.lotes[from];
+    b.fila = b.fila || {};
+    if (b.fila[from] != null) b.fila[to] = b.fila[from]; else delete b.fila[to];
     const n = cant(b, from);
     if (n > 1) b.mont[from] = n - 1;
-    else { delete b.celdas[from]; delete b.lotes[from]; delete b.mont[from]; }
+    else { delete b.celdas[from]; delete b.lotes[from]; delete b.fila[from]; delete b.mont[from]; }
   };
   // Selección por bloque: el gesto normal es "todo el 3er claro de babor, entre
   // flotadores", no cuerda a cuerda. La rejilla resuelve qué celdas abarca y estos
@@ -955,7 +966,7 @@ function GestionBatea({ db }) {
     setBateas(bateas.map((b0) => {
       if (b0.id !== flot.bateaId) return b0;
       const b = { ...b0, flot: flot.flot, bloq: Object.fromEntries([...flot.sel].map((k) => [k, true])),
-        celdas: { ...b0.celdas }, lotes: { ...b0.lotes }, extra: { ...b0.extra } };
+        celdas: { ...b0.celdas }, lotes: { ...b0.lotes }, fila: { ...b0.fila }, extra: { ...b0.extra } };
       // Un punto anulado no puede tener cuerda: esas cuerdas nunca estuvieron ahí de
       // verdad. Se les busca sitio en su mismo claro y, si no lo hay, quedan sin ubicar.
       const libre = (k) => !b.celdas[k] && !b.bloq[k];
@@ -964,12 +975,12 @@ function GestionBatea({ db }) {
         const cat = b.celdas[k];
         if (!cat) continue;
         const { r } = leeK(k);
-        const lote = b.lotes[k];
-        delete b.celdas[k]; delete b.lotes[k];
+        const lote = b.lotes[k], fl = b.fila[k];
+        delete b.celdas[k]; delete b.lotes[k]; delete b.fila[k];
         let hueco = null;
         for (let x = 0; x < b.ancho && !hueco; x++)
           for (const y of MITADES) if (!hueco && libre(kCelda(r, x, y))) hueco = kCelda(r, x, y);
-        if (hueco) { b.celdas[hueco] = cat; if (lote != null) b.lotes[hueco] = lote; movidas++; }
+        if (hueco) { b.celdas[hueco] = cat; if (lote != null) b.lotes[hueco] = lote; if (fl != null) b.fila[hueco] = fl; movidas++; }
         else { b.extra[cat]++; sinSitio++; }
       }
       if (movidas || sinSitio) aviso = `${b.nombre}: ${movidas ? movidas + " cuerdas apartadas dentro de su claro" : ""}` +
@@ -1067,7 +1078,6 @@ function GestionBatea({ db }) {
     const orig = op.orig.map((f) => conNota({ bateaId: +f.bateaId, n: parseInt(f.n), nota: f.nota }));
     if (orig.some((f) => !bx(f.bateaId))) return flash("Selecciona bateas válidas.");
     if (orig.some((f) => !(f.n > 0))) return flash("Cantidad inválida: pon las cuerdas de cada batea.");
-    if (new Set(orig.map((f) => f.bateaId)).size < orig.length) return flash("Hay una batea repetida.");
     const n = orig.reduce((s, f) => s + f.n, 0);
     let dest = [];
     if (conDest) {
@@ -1075,13 +1085,14 @@ function GestionBatea({ db }) {
       dest = op.dest.map((f) => conNota({ bateaId: +f.bateaId, n: op.dest.length === 1 && !f.n ? n : parseInt(f.n), nota: f.nota }));
       if (dest.some((f) => !bx(f.bateaId))) return flash("Selecciona bateas de destino válidas.");
       if (dest.some((f) => !(f.n > 0))) return flash("Cantidad inválida: pon las cuerdas de cada batea de destino.");
-      if (new Set(dest.map((f) => f.bateaId)).size < dest.length) return flash("Hay una batea de destino repetida.");
     }
     const nD = dest.reduce((s, f) => s + f.n, 0);
     if (op.tipo === "movimiento" && nD !== n) return flash(`Salen ${n} cuerdas y llegan ${nD}: en un movimiento deben ser las mismas.`);
     const o = { ...op, id: Date.now(), n, nDest: nD, orig, dest,
       bateaId: orig[0].bateaId, bateaDestId: dest[0]?.bateaId ?? null };
     let fases;
+    // Fila del reparto, solo si esa batea sale más de una vez: así sus cuerdas se distinguen.
+    const fila = (fs, f, i) => (fs.filter((x) => x.bateaId === f.bateaId).length > 1 ? i : null);
     if (o.tipo === "venta") {
       const e = parseFloat(o.veur) || 0;
       o.base = o.vmodo === "sacos"
@@ -1090,14 +1101,17 @@ function GestionBatea({ db }) {
       if (o.base <= 0) return flash("Faltan datos de la venta (cantidad y €/kg).");
       fases = orig.map((f) => ({ modo: "quitar", bateaId: f.bateaId, cat: "venta", n: f.n }));
     }
-    else if (o.tipo === "siembra") fases = orig.map((f) => ({ modo: "poner", bateaId: f.bateaId, cat: o.cat, n: f.n }));
-    else if (o.tipo === "ajuste") fases = orig.map((f) => ({ modo: o.dir, bateaId: f.bateaId, cat: o.cat, n: f.n }));
+    else if (o.tipo === "siembra") fases = orig.map((f, i) => ({ modo: "poner", bateaId: f.bateaId, cat: o.cat, n: f.n, fila: fila(orig, f, i) }));
+    else if (o.tipo === "ajuste") fases = orig.map((f, i) => ({ modo: o.dir, bateaId: f.bateaId, cat: o.cat, n: f.n, fila: o.dir === "poner" ? fila(orig, f, i) : null }));
     else fases = [ // movimiento y desdoble: primero se levanta todo, luego se pone
       ...orig.map((f) => ({ modo: "quitar", bateaId: f.bateaId, cat: o.cat, n: f.n })),
-      ...dest.map((f) => ({ modo: "poner", bateaId: f.bateaId, cat: o.tipo === "desdoble" ? o.catDest : o.cat, n: f.n })),
+      ...dest.map((f, i) => ({ modo: "poner", bateaId: f.bateaId, cat: o.tipo === "desdoble" ? o.catDest : o.cat, n: f.n, fila: fila(dest, f, i) })),
     ];
     // Quitar más de lo que existe: imposible físicamente → se bloquea (no es sobrecapacidad).
-    for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < f.n)
+    // Sumando las filas de una misma batea: se levantan de la misma batea.
+    const aQuitar = {};
+    for (const f of fases) if (f.modo === "quitar") aQuitar[f.bateaId + "|" + f.cat] = (aQuitar[f.bateaId + "|" + f.cat] || 0) + f.n;
+    for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < aQuitar[f.bateaId + "|" + f.cat])
       return flash(`${bn(f.bateaId)}: solo hay ${stock(bx(f.bateaId), f.cat)} ${CAT[f.cat].label}.`);
     setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas), origen: {} });
   };
@@ -1173,7 +1187,10 @@ function GestionBatea({ db }) {
     const b = bs.find((x) => x.id === f.bateaId);
     let origen = pend.origen || {};
     if (f.modo === "poner") {
-      pend.sel.forEach((k) => { b.celdas[k] = f.cat; b.lotes[k] = pend.op.id; });
+      pend.sel.forEach((k) => {
+        b.celdas[k] = f.cat; b.lotes[k] = pend.op.id;
+        if (f.fila != null) b.fila[k] = f.fila; else delete b.fila[k];
+      });
       if (resto > 0) {
         // Lo que no cabe se amontona sobre los puntos marcados, repartido a partes
         // iguales: en la batea se hace así y luego se rarea. Solo cae en "sin ubicar"
@@ -1198,7 +1215,7 @@ function GestionBatea({ db }) {
         origenFase[loteId] = (origenFase[loteId] || 0) + 1;
         const n = cant(b, k);
         if (n > 1) b.mont[k] = n - 1;
-        else { delete b.celdas[k]; delete b.lotes[k]; delete b.mont[k]; }
+        else { delete b.celdas[k]; delete b.lotes[k]; delete b.fila[k]; delete b.mont[k]; }
       };
       pend.sel.forEach(quitarUna);
       let falta = resto;
@@ -1786,6 +1803,7 @@ function GestionBatea({ db }) {
             <div style={{ background: C.panel, border: `1px solid ${C.sel}`, borderRadius: 10, padding: 18 }}>
               <h2 style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>
                 {f.modo === "poner" ? "Colocar" : "Retirar"} {f.n} × {CAT[f.cat].label} — {b.nombre}
+                {f.fila != null && filasPon(pend.op)[f.fila]?.nota ? ` · ${filasPon(pend.op)[f.fila].nota}` : ""}
               </h2>
               <p style={{ color: C.mut, fontSize: 13, margin: "0 0 12px" }}>
                 Fase {pend.fase + 1} de {pend.fases.length} · marcadas {pend.sel.size} / {f.n}
@@ -2111,7 +2129,7 @@ function GestionBatea({ db }) {
           ];
           const porBatea = bateas.map((b) => {
             // Una carga de varias bateas se reparte entre ellas según las cuerdas de cada una.
-            const parte = (o) => (origOp(o).find((r) => r.bateaId === b.id)?.n || 0) / (o.n || 1);
+            const parte = (o) => origOp(o).reduce((s, r) => s + (r.bateaId === b.id ? r.n : 0), 0) / (o.n || 1);
             const bo = vops.filter((o) => parte(o) > 0);
             const bc = bo.reduce((s, o) => s + o.n * parte(o), 0), bk = bo.reduce((s, o) => s + kgOp(o) * parte(o), 0);
             return { b, n: bo.length, bc, bk, be: bo.reduce((s, o) => s + totalVenta(o.base || 0) * parte(o), 0) };
