@@ -476,6 +476,7 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
     const k = kTouch(e);
     if (k) pintar(k, drag);
   };
+  const grupo = { display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" };
   const chip = (activo, rot, alPulsar) => (
     <button key={rot} style={{ ...mini(activo ? C.sel : null), fontWeight: activo ? 700 : 400 }}
       aria-pressed={activo} onClick={alPulsar}>{rot}</button>
@@ -484,24 +485,30 @@ function Grid({ b, sel, onCell, onCells, elegible, info }) {
   return (
     <div ref={wrap} style={{ width: "100%" }}>
       {onCell && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12, color: C.mut, flexWrap: "wrap" }}>
-          <span>Seleccionar por</span>
-          {chip(gran === "zona", "zona", () => setGran("zona"))}
-          {chip(gran === "cuerda", "cuerda", () => setGran("cuerda"))}
-          {gran === "zona" && (
-            <>
-              <span style={{ marginLeft: 4 }}>cuerdas</span>
-              {chip(mitad === "ambas", "las dos", () => setMitad("ambas"))}
-              {chip(mitad === 0, "proa", () => setMitad(0))}
-              {chip(mitad === 1, "popa", () => setMitad(1))}
-            </>
-          )}
+        <div style={{ marginBottom: 8, fontSize: 12, color: C.mut }}>
+          {/* Qué se marca: cada grupo va entero, sin partirse al cambiar de línea. */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px 12px", flexWrap: "wrap" }}>
+            <span style={grupo}>
+              <span>Seleccionar por</span>
+              {chip(gran === "zona", "zona", () => setGran("zona"))}
+              {chip(gran === "cuerda", "cuerda", () => setGran("cuerda"))}
+            </span>
+            {gran === "zona" && (
+              <span style={grupo}>
+                <span>cuerdas</span>
+                {chip(mitad === "ambas", "las dos", () => setMitad("ambas"))}
+                {chip(mitad === 0, "proa", () => setMitad(0))}
+                {chip(mitad === 1, "popa", () => setMitad(1))}
+              </span>
+            )}
+          </div>
+          {/* Qué hace el dedo: es otra cosa (marcar o mover el plano), en su propia línea. */}
           {scroll && (
-            <>
-              <span style={{ marginLeft: 4 }}>dedo</span>
+            <div style={{ ...grupo, marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${C.line}` }}>
+              <span>Dedo</span>
               {chip(!mover, "marcar", () => setMover(false))}
               {chip(mover, "deslizar ↔", () => setMover(true))}
-            </>
+            </div>
           )}
         </div>
       )}
