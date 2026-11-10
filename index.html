@@ -2075,6 +2075,21 @@ function GestionBatea({ db }) {
                     </tr>
                   ))}
                 </tbody>
+                {(() => {
+                  const td = { padding: "8px", borderTop: `2px solid ${C.line}`, fontWeight: 700 };
+                  return (
+                    <tfoot>
+                      <tr>
+                        <td style={td}>Total</td>
+                        <td style={{ ...td, color: C.rope }}>{fmtN(stockTot("colectora"))}</td>
+                        <td style={{ ...td, color: C.pink }}>{fmtN(stockTot("desdoble"))}</td>
+                        <td style={{ ...td, color: C.foam }}>{fmtN(stockTot("venta"))}</td>
+                        <td style={{ ...td, color: ocupTot > capTot ? C.warn : C.text }}>{fmtN(ocupTot)}</td>
+                        <td style={{ ...td, color: C.mut }}>{fmtN(capTot)}</td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table></div>
               <h3 style={h3}>Alertas de manejo (antigüedad)</h3>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
