@@ -1958,6 +1958,30 @@ function GestionBatea({ db }) {
                     </tr>);
                   })}
                 </tbody>
+                {(() => {
+                  // Totales de lo filtrado. El precio medio va ponderado por kg (sacos de 10 kg,
+                  // granel en kg netos), no es la media simple de los €/kg de cada fila.
+                  const kgV = (x) => x.modo === "sacos" ? (+x.sacos || 0) * 10 : (+x.kgBrutos || 0) * (1 - (+x.desct || 0) / 100);
+                  const sacos = ventasF.reduce((t, x) => t + (x.modo === "sacos" ? +x.sacos || 0 : 0), 0);
+                  const kgGranel = ventasF.reduce((t, x) => t + (x.modo === "sacos" ? 0 : kgV(x)), 0);
+                  const kg = ventasF.reduce((t, x) => t + kgV(x), 0);
+                  const media = kg > 0 ? ventasF.reduce((t, x) => t + (+x.eurkg || 0) * kgV(x), 0) / kg : null;
+                  const td = { padding: "8px", borderTop: `2px solid ${C.line}`, fontWeight: 700, whiteSpace: "nowrap" };
+                  return (
+                    <tfoot>
+                      <tr>
+                        <td style={td}>Total ({fmtN(ventasF.length)})</td>
+                        <td style={td}>{fmtN(sacos)} sacos{kgGranel > 0 ? ` · ${fmtN(Math.round(kgGranel))} kg granel` : ""}</td>
+                        <td style={td} title="Precio medio ponderado por kg">
+                          {media != null ? media.toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : "—"}
+                          <div style={{ color: C.mut, fontSize: 11, fontWeight: 400 }}>media €/kg</div>
+                        </td>
+                        <td style={{ ...td, color: C.foam }}>{fmtEUR(ventasF.reduce((t, x) => t + (x.total || 0), 0))}</td>
+                        <td style={td} colSpan={4}></td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table></div>
             )}
           </>
