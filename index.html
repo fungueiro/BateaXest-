@@ -1307,7 +1307,7 @@ function GestionBatea({ db }) {
   const sum = (est) => ventasF.filter((x) => !est || x.estado === est).reduce((s, x) => s + x.total, 0);
 
   // ── Filtros Resumen / Análisis ──
-  const [fr, setFr] = useState({ desde: "", hasta: "", tipo: "", bateas: [] });
+  const [fr, setFr] = useState({ desde: "", hasta: "", tipo: "", cat: "", bateas: [] });
   const [fa, setFa] = useState({ desde: "", hasta: "", bateas: [], modo: "" });
   const enB = (lista, ...ids) => lista.length === 0 || ids.some((i) => lista.includes(i));
 
@@ -1991,7 +1991,8 @@ function GestionBatea({ db }) {
         {tab === "stats" && (() => {
           const opsR = ops.filter((o) =>
             (!fr.desde || o.fecha >= fr.desde) && (!fr.hasta || o.fecha <= fr.hasta) &&
-            (!fr.tipo || o.tipo === fr.tipo) && enB(fr.bateas, ...idsOp(o)));
+            (!fr.tipo || o.tipo === fr.tipo) && enB(fr.bateas, ...idsOp(o)) &&
+            (!fr.cat || (o.tipo === "venta" ? fr.cat === "venta" : o.cat === fr.cat || (o.tipo === "desdoble" && o.catDest === fr.cat))));
           const ventasR = ventas.filter((x) =>
             (!fr.desde || x.fecha >= fr.desde) && (!fr.hasta || x.fecha <= fr.hasta) && enB(fr.bateas, ...(x.bateaIds || [x.bateaId])));
           const stockTot = (c) => bateas.reduce((s, b) => s + stock(b, c), 0);
@@ -2015,8 +2016,14 @@ function GestionBatea({ db }) {
                     <option value="venta">Venta / cosecha</option><option value="movimiento">Movimiento</option><option value="ajuste">Ajuste</option>
                   </select>
                 </Field>
+                <Field label="Tipo de cuerda" w={150}>
+                  <select style={inp} value={fr.cat} onChange={(e) => setFr({ ...fr, cat: e.target.value })}>
+                    <option value="">Todas</option>
+                    {CATS.map((c) => <option key={c} value={c}>{CAT[c].label}</option>)}
+                  </select>
+                </Field>
                 <Field label="Bateas" w={220}><BChips f={fr} setF={setFr} bateas={bateas} /></Field>
-                <button style={btn(false)} onClick={() => setFr({ desde: "", hasta: "", tipo: "", bateas: [] })}>Limpiar</button>
+                <button style={btn(false)} onClick={() => setFr({ desde: "", hasta: "", tipo: "", cat: "", bateas: [] })}>Limpiar</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,200px),1fr))", gap: 14 }}>
                 {kpis.map(([t, v, col]) => (
@@ -2029,7 +2036,7 @@ function GestionBatea({ db }) {
               <h3 style={h3}>Movimiento en el periodo</h3>
               {(() => {
                 const cuerdas = (t) => opsR.filter((o) => o.tipo === t).reduce((x, o) => x + o.n, 0);
-                const hayFiltro = fr.desde || fr.hasta || fr.tipo || fr.bateas.length;
+                const hayFiltro = fr.desde || fr.hasta || fr.tipo || fr.cat || fr.bateas.length;
                 if (!opsR.length) return (
                   <p style={{ color: C.mut, fontSize: 14 }}>
                     {hayFiltro ? "Ninguna operación cae dentro del filtro." : "Todavía no hay operaciones registradas."}
@@ -2041,6 +2048,40 @@ function GestionBatea({ db }) {
                       {fmtN(opsR.length)} {opsR.length === 1 ? "operación" : "operaciones"}
                       {fr.desde || fr.hasta ? ` · ${fmtF(fr.desde) || "el principio"} → ${fmtF(fr.hasta) || "hoy"}` : " · todas las fechas"}
                     </p>
+                    {fr.cat ? (() => {
+                      // Cuerdas de un tipo en el periodo. Con bateas filtradas, solo cuenta la
+                      // parte de cada operación que cae en ellas.
+                      const enF = (rs) => rs.reduce((x, r) => x + (!fr.bateas.length || fr.bateas.includes(r.bateaId) ? r.n || 0 : 0), 0);
+                      const suma = (pred, lado) => opsR.filter(pred).reduce((x, o) => x + enF(lado(o)), 0);
+                      const c = fr.cat;
+                      const deDesdoble = suma((o) => o.tipo === "desdoble" && o.catDest === c, destOp);
+                      const sembradas = suma((o) => o.tipo === "siembra" && o.cat === c, origOp);
+                      const vendidas = c === "venta" ? suma((o) => o.tipo === "venta", origOp) : 0;
+                      const desdobladas = suma((o) => o.tipo === "desdoble" && o.cat === c, origOp);
+                      const movidas = suma((o) => o.tipo === "movimiento" && o.cat === c, origOp);
+                      const ajuste = suma((o) => o.tipo === "ajuste" && o.cat === c && o.dir === "poner", origOp)
+                        - suma((o) => o.tipo === "ajuste" && o.cat === c && o.dir !== "poner", origOp);
+                      const det = (ps) => ps.filter(([n]) => n > 0).map(([n, t]) => `${fmtN(n)} ${t}`).join(" · ");
+                      const tarjetas = [
+                        ["Hechas", deDesdoble + sembradas, CAT[c].color, det([[deDesdoble, "en desdoble"], [sembradas, "sembradas"]])],
+                        ["Salidas", vendidas + desdobladas, C.text, det([[vendidas, "vendidas"], [desdobladas, "desdobladas"]])],
+                        ["Movidas", movidas, C.mut, "de una batea a otra"],
+                        ["Ajuste", ajuste, C.mut, "corrección de stock"],
+                      ].filter(([t, n]) => n !== 0 || t === "Hechas");
+                      return (
+                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                          {tarjetas.map(([t, n, col, sub]) => (
+                            <div key={t} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 16px" }}>
+                              <div style={lbl}>{t} · {CAT[c].label}</div>
+                              <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, color: col }}>
+                                {n > 0 && t === "Ajuste" ? "+" : ""}{fmtN(n)} <span style={{ fontSize: 13, color: C.mut, fontWeight: 400 }}>cuerdas</span>
+                              </div>
+                              {sub && <div style={{ fontSize: 11, color: C.mut }}>{sub}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })() : (
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       {[["siembra", C.rope], ["desdoble", C.pink], ["venta", C.foam], ["movimiento", C.mut], ["ajuste", C.mut]]
                         .map(([t, col]) => [t, col, cuerdas(t)]).filter(([, , n]) => n > 0)
@@ -2053,6 +2094,7 @@ function GestionBatea({ db }) {
                           </div>
                         ))}
                     </div>
+                    )}
                   </>
                 );
               })()}
