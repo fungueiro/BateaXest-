@@ -141,6 +141,11 @@ movimiento/desdoble, `orig` en siembra/ajuste), **solo** cuando la batea se repi
 `fila` viaja con la cuerda como `lotes` (mover, anular, editar, retirar) y entra en el
 borde de lote del plano, en `cuerdasLote(b, cat, lote, fila)` y en `notaEn(o, id, fila)`.
 
+Un **movimiento** no crea cuerdas: al colocar, cada cuerda recupera el lote y la `fila` que
+tenía al levantarla (`pend.saco`, en orden de retirada). Desdoble y siembra sí ponen su
+propio lote. Gracias a eso, en Resumen con un tipo de cuerda, **Quedan hoy** cuenta las
+cuerdas del plano cuyo lote es una operación del periodo que las hizo.
+
 El panel **Plano** (botón en la tarjeta de la batea) es donde se anulan los puntos y se
 marcan los flotadores.
 

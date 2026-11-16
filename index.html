@@ -1120,7 +1120,7 @@ function GestionBatea({ db }) {
     for (const f of fases) if (f.modo === "quitar") aQuitar[f.bateaId + "|" + f.cat] = (aQuitar[f.bateaId + "|" + f.cat] || 0) + f.n;
     for (const f of fases) if (f.modo === "quitar" && stock(bx(f.bateaId), f.cat) < aQuitar[f.bateaId + "|" + f.cat])
       return flash(`${bn(f.bateaId)}: solo hay ${stock(bx(f.bateaId), f.cat)} ${CAT[f.cat].label}.`);
-    setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas), origen: {} });
+    setPend({ op: o, fases, fase: 0, sel: selInicial(fases[0]), snap: clon(bateas), origen: {}, saco: [] });
   };
 
   const faseActual = pend && pend.fases[pend.fase];
@@ -1193,11 +1193,21 @@ function GestionBatea({ db }) {
     const bs = clon(bateas);
     const b = bs.find((x) => x.id === f.bateaId);
     let origen = pend.origen || {};
+    // En un movimiento las cuerdas son las mismas que se levantaron: conservan su lote
+    // (fecha, notas) y su fila. Se sacan del "saco" en el orden en que se levantaron.
+    const mueve = pend.op.tipo === "movimiento";
+    let saco = [...(pend.saco || [])];
     if (f.modo === "poner") {
       pend.sel.forEach((k) => {
-        b.celdas[k] = f.cat; b.lotes[k] = pend.op.id;
-        if (f.fila != null) b.fila[k] = f.fila; else delete b.fila[k];
+        b.celdas[k] = f.cat;
+        const t = mueve ? saco.shift() : null;
+        if (!mueve) b.lotes[k] = pend.op.id;
+        else if (t && t.lote != null && t.lote !== "init") b.lotes[k] = t.lote;
+        else delete b.lotes[k]; // lote inicial o sin ubicar: sigue sin lote
+        const fl = mueve ? t?.fila : f.fila;
+        if (fl != null) b.fila[k] = fl; else delete b.fila[k];
       });
+      if (mueve) saco = saco.slice(Math.max(0, f.n - pend.sel.size)); // las amontonadas
       if (resto > 0) {
         // Lo que no cabe se amontona sobre los puntos marcados, repartido a partes
         // iguales: en la batea se hace así y luego se rarea. Solo cae en "sin ubicar"
@@ -1220,6 +1230,7 @@ function GestionBatea({ db }) {
       const quitarUna = (k) => {
         const loteId = b.lotes[k] ?? "init";
         origenFase[loteId] = (origenFase[loteId] || 0) + 1;
+        saco.push({ lote: b.lotes[k] ?? null, fila: b.fila?.[k] ?? null });
         const n = cant(b, k);
         if (n > 1) b.mont[k] = n - 1;
         else { delete b.celdas[k]; delete b.lotes[k]; delete b.fila[k]; delete b.mont[k]; }
@@ -1238,12 +1249,13 @@ function GestionBatea({ db }) {
         b.extra[f.cat] -= deExtra;
         if (resto > deExtra) return flash(`Selecciona ${resto - deExtra} cuerdas más de ${CAT[f.cat].label}.`);
         if (deExtra > 0) origenFase.extra = (origenFase.extra || 0) + deExtra;
+        for (let i = 0; i < deExtra; i++) saco.push({ lote: null, fila: null });
       }
       origen = { ...origen };
       for (const [lid, n] of Object.entries(origenFase)) origen[lid] = (origen[lid] || 0) + n;
     }
     setBateas(bs);
-    if (pend.fase + 1 < pend.fases.length) setPend({ ...pend, fase: pend.fase + 1, sel: selInicial(pend.fases[pend.fase + 1]), origen });
+    if (pend.fase + 1 < pend.fases.length) setPend({ ...pend, fase: pend.fase + 1, sel: selInicial(pend.fases[pend.fase + 1]), origen, saco });
     else {
       const o = { ...pend.op, origenLotes: origen };
       let ventaId = null;
@@ -2061,13 +2073,19 @@ function GestionBatea({ db }) {
                       const movidas = suma((o) => o.tipo === "movimiento" && o.cat === c, origOp);
                       const ajuste = suma((o) => o.tipo === "ajuste" && o.cat === c && o.dir === "poner", origOp)
                         - suma((o) => o.tipo === "ajuste" && o.cat === c && o.dir !== "poner", origOp);
+                      // De las hechas en el periodo, cuántas siguen hoy en la batea: cada cuerda
+                      // del plano guarda el lote (la operación) que la hizo.
+                      const hechasIds = new Set(opsR.filter((o) => (o.tipo === "desdoble" && o.catDest === c) || (o.tipo === "siembra" && o.cat === c)).map((o) => o.id));
+                      const quedan = bateas.filter((b) => !fr.bateas.length || fr.bateas.includes(b.id))
+                        .reduce((x, b) => x + Object.entries(b.celdas).reduce((y, [k, cc]) => y + (cc === c && hechasIds.has(b.lotes?.[k]) ? cant(b, k) : 0), 0), 0);
                       const det = (ps) => ps.filter(([n]) => n > 0).map(([n, t]) => `${fmtN(n)} ${t}`).join(" · ");
                       const tarjetas = [
                         ["Hechas", deDesdoble + sembradas, CAT[c].color, det([[deDesdoble, "en desdoble"], [sembradas, "sembradas"]])],
+                        ["Quedan hoy", quedan, CAT[c].color, c === "venta" ? "de las hechas, sin vender aún" : "de las hechas, aún en la batea"],
                         ["Salidas", vendidas + desdobladas, C.text, det([[vendidas, "vendidas"], [desdobladas, "desdobladas"]])],
                         ["Movidas", movidas, C.mut, "de una batea a otra"],
                         ["Ajuste", ajuste, C.mut, "corrección de stock"],
-                      ].filter(([t, n]) => n !== 0 || t === "Hechas");
+                      ].filter(([t, n]) => n !== 0 || t === "Hechas" || t === "Quedan hoy");
                       return (
                         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                           {tarjetas.map(([t, n, col, sub]) => (
